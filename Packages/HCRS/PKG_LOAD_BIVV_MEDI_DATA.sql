@@ -1,0 +1,837 @@
+CREATE OR REPLACE PACKAGE      PKG_LOAD_BIVV_MEDI_DATA AS
+
+   PROCEDURE p_main (a_clean_flg VARCHAR2 DEFAULT 'Y');
+
+END;
+/
+
+
+CREATE OR REPLACE PACKAGE BODY      PKG_LOAD_BIVV_MEDI_DATA AS
+
+  c_program   CONSTANT bivv.conv_log_t.program%TYPE := 'HCRS.PKG_LOAD_BIVV_MEDI_DATA';
+  c_bivv_ndc_lbl   CONSTANT hcrs.reb_claim_t.ndc_lbl%TYPE :='71104';
+
+
+
+----------------------p_load_reb_claim---------------------
+PROCEDURE p_load_reb_claim IS
+   v_module    bivv.conv_log_t.module%TYPE := 'p_load_reb_claim';
+BEGIN
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   INSERT INTO hcrs.reb_claim_t (
+      pgm_id,
+      ndc_lbl,
+      period_id,
+      reb_clm_seq_no,
+      co_id,
+      subm_typ_cd,
+      reb_claim_stat_cd,
+      pstmrk_dt,
+      pymnt_pstmrk_dt,
+      rcv_dt,
+      input_dt,
+      extd_due_dt,
+      invc_num,
+      tot_claim_units,
+      valid_dt,
+      prelim_run_dt,
+      prelim_sent_dt,
+      prelim_apprv_dt,
+      final_run_dt,
+      dspt_prelim_sent_dt,
+      dspt_prelim_apprv_dt,
+      corr_int_flg,
+      create_dt,
+      mod_dt,
+      mod_by,
+      attachment_ref_id
+	  )
+   SELECT 
+      pgm_id,
+      ndc_lbl,
+      period_id,
+      reb_clm_seq_no,
+      co_id,
+      subm_typ_cd,
+      reb_claim_stat_cd,
+      pstmrk_dt,
+      pymnt_pstmrk_dt,
+      rcv_dt,
+      input_dt,
+      extd_due_dt,
+      invc_num,
+      tot_claim_units,
+      valid_dt,
+      prelim_run_dt,
+      prelim_sent_dt,
+      prelim_apprv_dt,
+      final_run_dt,
+      dspt_prelim_sent_dt,
+      dspt_prelim_apprv_dt,
+      corr_int_flg,
+      SYSDATE AS create_dt,
+      mod_dt,
+      mod_by,
+      attachment_ref_id
+   FROM bivv.reb_claim_t;
+
+  bivv.pkg_util.p_saveLog('Inserted REB_CLAIM_T count: '||SQL%ROWCOUNT, c_program, v_module);
+  bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN 
+  bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+  ROLLBACK;
+END;
+
+
+----------------------------------p_load_reb_claim_line-------------------------------
+
+PROCEDURE p_load_reb_claim_line IS
+   v_module    bivv.conv_log_t.module%TYPE := 'p_load_reb_claim_line';
+BEGIN
+ bivv.pkg_util.p_saveLog('START', c_program, v_module);
+   
+   INSERT INTO hcrs.reb_clm_ln_itm_t
+     (
+      pgm_id,
+      ndc_lbl,
+      period_id,
+      reb_clm_seq_no,
+      co_id,
+      ln_itm_seq_no,
+      claim_units,
+      claim_amt,
+      reb_claim_ln_itm_stat_cd,
+      script_cnt,
+      pgm_pur,
+      reimbur_amt,
+      corr_flg,
+      item_prod_fmly_ndc,
+      item_prod_mstr_ndc,
+      create_dt,
+      mod_dt,
+      mod_by,
+      nonmed_reimbur_amt,
+      total_reimbur_amt
+     )
+   SELECT 
+      pgm_id,
+      ndc_lbl,
+      period_id,
+      reb_clm_seq_no,
+      co_id,
+      ln_itm_seq_no,
+      claim_units,
+      claim_amt,
+      reb_claim_ln_itm_stat_cd,
+      script_cnt,
+      pgm_pur,
+      reimbur_amt,
+      corr_flg,
+      item_prod_fmly_ndc,
+      item_prod_mstr_ndc,
+      SYSDATE AS create_dt,
+      mod_dt,
+      mod_by,
+      nonmed_reimbur_amt,
+      total_reimbur_amt
+   FROM bivv.reb_clm_ln_itm_t;
+
+   bivv.pkg_util.p_saveLog('Inserted REB_CLM_LN_ITM_T count: '||SQL%ROWCOUNT, c_program, v_module);
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN 
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      ROLLBACK;
+END;
+
+-------------------------------------p_load_reb_valid_claim---------------------------
+
+
+PROCEDURE p_load_reb_valid_claim IS
+  v_module    bivv.conv_log_t.module%TYPE := 'p_load_reb_valid_claim';
+BEGIN
+  bivv.pkg_util.p_saveLog('START', c_program, v_module);
+  
+   INSERT INTO hcrs.valid_claim_t
+     (
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     ndc_prod,
+     ndc_pckg,
+     dspt_flg,
+     claim_units,
+     claim_amt,
+     script_cnt,
+     pgm_pur,
+     reimbur_amt,
+     corr_flg,
+     create_dt,
+     mod_dt,
+     mod_by
+     )
+   SELECT pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     ndc_prod,
+     ndc_pckg,
+     dspt_flg,
+     claim_units,
+     claim_amt,
+     script_cnt,
+     pgm_pur,
+     reimbur_amt,
+     corr_flg,
+     SYSDATE AS create_dt,
+     mod_dt,
+     mod_by
+   FROM bivv.valid_claim_t;
+
+   bivv.pkg_util.p_saveLog('Inserted VALID_CLAIM_T count: '||SQL%ROWCOUNT, c_program, v_module);
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN 
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      ROLLBACK;
+END p_load_reb_valid_claim;
+
+------------------------p_load_reb_dspt_claim--------------------------------
+
+
+PROCEDURE p_load_reb_dspt_claim IS
+  v_module    bivv.conv_log_t.module%TYPE := 'p_load_reb_dspt_claim';
+BEGIN
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   INSERT INTO hcrs.dspt_t
+     (
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     dspt_seq_no,
+     ndc_prod,
+     ndc_pckg,
+     paid_units,
+     dspt_units,
+     wrt_off_units,
+     dspt_dt,
+     create_dt,
+     mod_dt,
+     mod_by,
+     note_txt
+     )
+   SELECT 
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     dspt_seq_no,
+     ndc_prod,
+     ndc_pckg,
+     paid_units,
+     dspt_units,
+     wrt_off_units,
+     dspt_dt,
+     SYSDATE AS create_dt,
+     mod_dt,
+     mod_by,
+     note_txt
+   FROM  bivv.dspt_t;
+
+   bivv.pkg_util.p_saveLog('Inserted DSPT_T count: '||SQL%ROWCOUNT, c_program, v_module);
+   
+   INSERT INTO hcrs.dspt_rsn_t
+     (
+     rpr_dspt_rsn_id,
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     dspt_seq_no,
+     dspt_priority,
+     create_dt,
+     mod_dt,
+     mod_by
+     )
+   SELECT 
+     rpr_dspt_rsn_id,
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     dspt_seq_no,
+     dspt_priority,
+     SYSDATE AS create_dt,
+     mod_dt,
+     mod_by
+     FROM  bivv.dspt_rsn_t;
+
+   bivv.pkg_util.p_saveLog('Inserted DSPT_RSN_T count: '||SQL%ROWCOUNT, c_program, v_module);
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN 
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      ROLLBACK;
+END p_load_reb_dspt_claim;
+
+------------------------p_load_check_req_tbl------------------------------
+
+PROCEDURE p_load_check_req_tbl IS
+  v_module    bivv.conv_log_t.module%TYPE := 'p_load_check_req_tbl';
+   
+BEGIN
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);   
+       
+   INSERT INTO hcrs.valid_claim_chk_req_t
+     (
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     check_id,
+     ndc_prod,
+     ndc_pckg,
+     paid_amt,
+     int_amt,
+     int_owed_amt,
+     int_wrt_off_amt,
+     int_owed_flg,
+     create_dt,
+     mod_dt,
+     mod_by
+     )
+   SELECT 
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     check_id,
+     ndc_prod,
+     ndc_pckg,
+     paid_amt,
+     int_amt,
+     int_owed_amt,
+     int_wrt_off_amt,
+     int_owed_flg,
+     SYSDATE AS create_dt,
+     mod_dt,
+     mod_by
+   FROM bivv.valid_claim_chk_req_t;
+
+   bivv.pkg_util.p_saveLog('Inserted VALID_CLAIM_CHK_REQ_T count: '||SQL%ROWCOUNT, c_program, v_module);
+
+   INSERT INTO hcrs.dspt_check_req_t
+     (
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     dspt_seq_no,
+     check_id,
+     ndc_prod,
+     ndc_pckg,
+     paid_amt,
+     int_amt,
+     int_owed_amt,
+     int_wrt_off_amt,
+     int_owed_flg,
+     create_dt,
+     mod_dt,
+     mod_by
+      )
+   SELECT 
+     pgm_id,
+     ndc_lbl,
+     period_id,
+     reb_clm_seq_no,
+     co_id,
+     ln_itm_seq_no,
+     dspt_seq_no,
+     check_id,
+     ndc_prod,
+     ndc_pckg,
+     paid_amt,
+     int_amt,
+     int_owed_amt,
+     int_wrt_off_amt,
+     int_owed_flg,
+     SYSDATE AS create_dt,
+     mod_dt,
+     mod_by
+     FROM  bivv.dspt_check_req_t;
+
+   bivv.pkg_util.p_saveLog('Inserted DSPT_CHECK_REQ_T count: '||SQL%ROWCOUNT, c_program, v_module);
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+
+EXCEPTION
+   WHEN OTHERS THEN 
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      ROLLBACK;
+END p_load_check_req_tbl;
+
+--------------------p_load_check_agg_tbl------------------
+
+PROCEDURE p_load_check_agg_tbl IS
+  v_module    bivv.conv_log_t.module%TYPE := 'p_load_check_agg_tbl';
+BEGIN
+  bivv.pkg_util.p_saveLog('START', c_program, v_module);
+  
+   INSERT INTO hcrs.check_req_t
+     (
+     check_id,
+     check_req_stat_cd,
+     pymnt_catg_cd,
+     credit_num,
+     check_req_amt,
+     cr_bal,
+     check_input_dt,
+     check_dt,
+     conf_dt,
+     prcss_dt,
+     mail_dt,
+     check_req_dt,
+     payer_notif_dt,
+     pgm_id,
+     co_id,
+     int_sel_meth_cd,
+     man_int_amt,
+     rosi_flg,
+     pqas_flg,
+     est_check_mail_dt,
+     create_dt,
+     mod_dt,
+     mod_by,
+     amt_changed_flg,
+     cmt_txt,
+     attachment_ref_id
+     )
+   SELECT check_id,
+     check_req_stat_cd,
+     pymnt_catg_cd,
+     credit_num,
+     check_req_amt,
+     cr_bal,
+     check_input_dt,
+     check_dt,
+     conf_dt,
+     prcss_dt,
+     mail_dt,
+     check_req_dt,
+     payer_notif_dt,
+     pgm_id,
+     co_id,
+     int_sel_meth_cd,
+     man_int_amt,
+     rosi_flg,
+     pqas_flg,
+     est_check_mail_dt,
+     SYSDATE AS create_dt,
+     mod_dt,
+     mod_by,
+     amt_changed_flg,
+     cmt_txt,
+     attachment_ref_id
+    FROM  bivv.check_req_t;
+
+  bivv.pkg_util.p_saveLog('Inserted CHECK_REQ_T count: '||SQL%ROWCOUNT, c_program, v_module);
+  bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN 
+     bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module); 
+     ROLLBACK;
+END p_load_check_agg_tbl;
+
+--------------------------------p_load_check_t_tbl-------------------------------
+
+PROCEDURE p_load_check_t_tbl IS
+ v_module    bivv.conv_log_t.module%TYPE := 'p_load_check_t_tbl';
+BEGIN
+ bivv.pkg_util.p_saveLog('START', c_program, v_module);
+ 
+   INSERT INTO hcrs.check_t
+     (
+     check_id,
+     check_num,
+     check_amt,
+     create_dt,
+     mod_dt,
+     mod_by
+      )
+   SELECT
+      check_id,
+      check_num,
+      check_amt,
+      SYSDATE AScreate_dt,
+      mod_dt,
+      mod_by
+   FROM bivv.check_t;
+
+   bivv.pkg_util.p_saveLog('Inserted CHECK_T count: '||SQL%ROWCOUNT, c_program, v_module);
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN 
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      ROLLBACK;
+END p_load_check_t_tbl;
+
+------------------------------------p_load_check_appr_grp-----------------------
+PROCEDURE p_load_check_appr_grp IS
+   
+   v_module    bivv.conv_log_t.module%TYPE := 'p_load_check_appr_grp';
+    
+BEGIN
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   INSERT INTO hcrs.check_apprvl_grp_t
+     (
+     apprvl_grp_id,
+     co_id,
+     pgm_id,
+     apprvl_grp_desc,
+     apprvl_amt,
+     apprvl_status_cd,
+     ap_sent_dt,
+     create_dt,
+     create_by,
+     mod_dt,
+     mod_by,
+     sap_vendor_num,
+     attachment_ref_id
+      )
+	 SELECT
+	   apprvl_grp_id,
+     co_id,
+     pgm_id,
+     apprvl_grp_desc,
+     apprvl_amt,
+     apprvl_status_cd,
+     ap_sent_dt,
+     SYSDATE AS create_dt,
+     create_by,
+     mod_dt,
+     mod_by,
+     sap_vendor_num,
+     attachment_ref_id
+	   FROM bivv.check_apprvl_grp_t;
+   bivv.pkg_util.p_saveLog('Inserted CHECK_APPRVL_GRP_T count: '||SQL%ROWCOUNT, c_program, v_module);
+
+      
+   INSERT INTO hcrs.check_apprvl_grp_apprvl_t
+     (
+     apprvl_grp_id,
+     apprvl_limit_id,
+     apprvl_reason_cd,
+     apprvr_id,
+     apprvl_dt,
+     comment_txt,
+     create_dt,
+     mod_by,
+     mod_dt,
+     expected_release_dt
+      )
+	 SELECT
+	   apprvl_grp_id,
+     apprvl_limit_id,
+     apprvl_reason_cd,
+     'HCRS', --TEMP FIX'
+     apprvl_dt,
+     comment_txt,
+     SYSDATE AS create_dt,
+     mod_by,
+     mod_dt,
+     expected_release_dt
+   FROM bivv.check_apprvl_grp_apprvl_t;
+   bivv.pkg_util.p_saveLog('Inserted CHECK_APPRVL_GRP_APPRVL_T count: '||SQL%ROWCOUNT, c_program, v_module);
+
+
+   INSERT INTO hcrs.check_apprvl_grp_chk_xref_t
+     (
+     apprvl_grp_id,
+     check_id,
+     create_dt,
+     mod_by,
+     mod_dt
+      )
+	 SELECT
+	   apprvl_grp_id,
+     check_id,
+     SYSDATE AS create_dt,
+     mod_by,
+     mod_dt
+	   FROM bivv.check_apprvl_grp_chk_xref_t;
+   bivv.pkg_util.p_saveLog('Inserted CHECK_APPRVL_GRP_CHK_XREF_T count: '||SQL%ROWCOUNT, c_program, v_module);
+
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+EXCEPTION
+   WHEN OTHERS THEN 
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      ROLLBACK;
+END p_load_check_appr_grp;
+
+---------------------p_load_prod_pgm-----------------------------
+
+PROCEDURE p_load_prod_pgm IS
+   v_module    bivv.conv_log_t.module%TYPE := 'p_load_prod_pgm';
+BEGIN
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   INSERT INTO hcrs.prod_mstr_pgm_t 
+     (
+       pgm_id,
+       ndc_lbl,
+       ndc_prod,
+       ndc_pckg,
+       eff_dt,
+       end_dt,
+       create_dt,
+       mod_dt,
+       mod_by
+     )
+   SELECT 
+       pgm_id,
+       ndc_lbl,
+       ndc_prod,
+       ndc_pckg,
+       eff_dt,
+       end_dt,
+       SYSDATE AS create_dt,
+       mod_dt,
+       mod_by       
+   FROM bivv.prod_mstr_pgm_t;
+
+   bivv.pkg_util.p_saveLog('Inserted PGM-PROD count: '||SQL%ROWCOUNT, c_program, v_module);
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      ROLLBACK;
+END;
+
+-----------------------------URA CALC--------------------------------------------
+
+
+PROCEDURE p_load_ura_calc IS
+   v_module    bivv.conv_log_t.module%TYPE := 'p_load_ura_calc';
+BEGIN
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   INSERT INTO hcrs.pur_final_results_t (
+      period_id,
+      per_begin_dt,
+      per_end_dt,
+      pgm_id,
+      ndc_lbl,
+      ndc_prod,
+      ndc_pckg,
+      calc_amt,
+      eff_dt,
+      end_dt,
+      create_dt,
+      mod_by,
+      src_sys,
+      src_sys_unique_id)
+   SELECT
+      period_id,
+      per_begin_dt,
+      per_end_dt,
+      pgm_id,
+      ndc_lbl,
+      ndc_prod,
+      ndc_pckg,
+      calc_amt,
+      eff_dt,
+      end_dt,
+      SYSDATE AS create_dt,
+      mod_by,
+      src_sys,
+      src_sys_unique_id
+   FROM bivv.pur_final_results_t;
+
+   bivv.pkg_util.p_saveLog('Inserted URA count: '||SQL%ROWCOUNT, c_program, v_module);
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      ROLLBACK;
+END p_load_ura_calc;
+
+-------------------------p_cleanup_data----------------------
+
+PROCEDURE p_cleanup_data IS
+
+   v_module    bivv.conv_log_t.module%TYPE := 'p_cleanup_data';
+
+   v_appr_grp_cnt       NUMBER := 0;
+   v_appr_grp_x_cnt     NUMBER := 0;
+   v_appr_grp_app_cnt   NUMBER := 0;
+   v_check_dsp_cnt      NUMBER := 0;
+   v_check_val_cnt      NUMBER := 0;
+   v_check_t_cnt        NUMBER := 0;
+   v_check_req_cnt      NUMBER := 0;
+
+BEGIN 
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+    
+   FOR chk_cur IN (
+      SELECT check_id FROM valid_claim_chk_req_t
+      WHERE ndc_lbl = c_bivv_ndc_lbl
+      UNION
+      SELECT check_id from dspt_check_req_t 
+      WHERE ndc_lbl = c_bivv_ndc_lbl)
+   LOOP
+
+--   bivv.pkg_util.p_saveLog('Working on check id: '||chk_cur.check_id, c_program, v_module);
+
+   
+      FOR grp_cur IN (
+         SELECT apprvl_grp_id FROM check_apprvl_grp_chk_xref_t
+         WHERE check_id = chk_cur.check_id)
+      LOOP
+
+--         bivv.pkg_util.p_saveLog('Working on appr group id: '||grp_cur.apprvl_grp_id, c_program, v_module);
+
+         DELETE FROM hcrs.check_apprvl_grp_apprvl_t
+         WHERE apprvl_grp_id = grp_cur.apprvl_grp_id;
+         v_appr_grp_app_cnt := v_appr_grp_app_cnt + SQL%ROWCOUNT;
+
+         DELETE FROM hcrs.check_apprvl_grp_chk_xref_t
+         WHERE apprvl_grp_id = grp_cur.apprvl_grp_id;
+         v_appr_grp_x_cnt := v_appr_grp_x_cnt + SQL%ROWCOUNT;
+      
+         DELETE FROM hcrs.check_apprvl_grp_t
+         WHERE apprvl_grp_id = grp_cur.apprvl_grp_id;
+         v_appr_grp_cnt := v_appr_grp_cnt + SQL%ROWCOUNT;
+
+      END LOOP; -- approval group loop
+
+      DELETE FROM hcrs.dspt_check_req_t
+      WHERE check_id = chk_cur.check_id;
+      v_check_dsp_cnt := v_check_dsp_cnt + SQL%ROWCOUNT;
+
+      DELETE FROM hcrs.valid_claim_chk_req_t
+      WHERE check_id = chk_cur.check_id;
+      v_check_val_cnt := v_check_val_cnt + SQL%ROWCOUNT;
+
+      DELETE FROM hcrs.check_t
+      WHERE check_id = chk_cur.check_id;
+      v_check_t_cnt := v_check_t_cnt + SQL%ROWCOUNT;
+
+      DELETE FROM hcrs.check_req_t 
+      WHERE check_id = chk_cur.check_id;
+      v_check_req_cnt := v_check_req_cnt + SQL%ROWCOUNT;
+
+   END LOOP; -- check loop
+
+   bivv.pkg_util.p_saveLog('Deleted from CHECK_APPRVL_GRP_APPRVL_T: '||v_appr_grp_app_cnt||' rows', c_program, v_module);
+   bivv.pkg_util.p_saveLog('Deleted from CHECK_APPRVL_GRP_CHK_XREF_T: '||v_appr_grp_x_cnt||' rows', c_program, v_module);
+   bivv.pkg_util.p_saveLog('Deleted from CHECK_APPRVL_GRP_T: '||v_appr_grp_cnt||' rows', c_program, v_module);
+   bivv.pkg_util.p_saveLog('Deleted from DSPT_CHECK_REQ_T: '||v_check_dsp_cnt||' rows', c_program, v_module);
+   bivv.pkg_util.p_saveLog('Deleted from VALID_CLAIM_CHK_REQ_T: '||v_check_val_cnt||' rows', c_program, v_module);
+   bivv.pkg_util.p_saveLog('Deleted from CHECK_T: '||v_check_t_cnt||' rows', c_program, v_module);
+   bivv.pkg_util.p_saveLog('Deleted from CHECK_REQ_T: '||v_check_req_cnt||' rows', c_program, v_module);
+
+   DELETE FROM hcrs.dspt_rsn_t
+   WHERE  ndc_lbl = c_bivv_ndc_lbl;    
+   bivv.pkg_util.p_saveLog('Deleted from DSPT_RSN_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+
+   DELETE FROM hcrs.dspt_t
+   WHERE  ndc_lbl = c_bivv_ndc_lbl;    
+   bivv.pkg_util.p_saveLog('Deleted from DSPT_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+    
+   DELETE FROM hcrs.valid_claim_t
+   WHERE ndc_lbl = c_bivv_ndc_lbl;    
+   bivv.pkg_util.p_saveLog('Deleted from VALID_CLAIM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+    
+   DELETE FROM hcrs.reb_clm_ln_itm_t
+   WHERE ndc_lbl = c_bivv_ndc_lbl;    
+   bivv.pkg_util.p_saveLog('Deleted from REB_CLM_LN_ITM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+
+   DELETE FROM hcrs.reb_claim_t
+   WHERE ndc_lbl = c_bivv_ndc_lbl;
+   bivv.pkg_util.p_saveLog('Deleted from REB_CLAIM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+
+   DELETE FROM hcrs.pur_final_results_t
+   WHERE ndc_lbl = c_bivv_ndc_lbl;
+   bivv.pkg_util.p_saveLog('Deleted from PUR_FINAL_RESULTS_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+
+   DELETE FROM hcrs.prod_mstr_pgm_t 
+   WHERE NDC_LBL = c_bivv_ndc_lbl;
+   bivv.pkg_util.p_saveLog('Deleted from PROD_MSTR_PGM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+--   COMMIT;
+EXCEPTION
+   WHEN OTHERS THEN
+      ROLLBACK;
+      RAISE;
+END p_cleanup_data;
+  
+PROCEDURE p_main (a_clean_flg VARCHAR2 DEFAULT 'Y') IS
+   v_module    bivv.conv_log_t.module%TYPE := 'p_main';
+
+BEGIN
+
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   IF nvl(a_clean_flg, 'Y') = 'Y' THEN
+      p_cleanup_data;
+   END IF;
+
+   -- proceed to loading the data
+   p_load_prod_pgm;
+   p_load_reb_claim;
+   p_load_reb_claim_line;
+   p_load_check_agg_tbl;
+   p_load_reb_valid_claim;
+   p_load_reb_dspt_claim;
+   p_load_check_req_tbl;
+   p_load_check_t_tbl;
+   p_load_check_appr_grp;
+   p_load_ura_calc;
+   -- only commit manually after reviewing results.
+   --Commit;
+
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN
+      ROLLBACK;
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      bivv.pkg_util.p_saveLog('END', c_program, v_module);
+      
+END;
+END;
+/
