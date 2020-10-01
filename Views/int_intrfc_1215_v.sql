@@ -42,7 +42,8 @@ AS
    *                            support queries
    *  08/01/2020  Joe Kidd      CHG-000000: Bioverativ Integration
    *                            Add Bioverative RxC Direct and Indirect Sales
-   *                            Update Company Code filter
+   *  08/25/2020  Pravin Hujare CHG-0000000: SHIFT PHASE 2
+   *                            Add company code PR02 to the list of blocked company codes
    ****************************************************************************/
           -- ICW Fields (needed for interface queries)
           iis.sales_num,

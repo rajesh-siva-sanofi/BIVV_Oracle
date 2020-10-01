@@ -57,10 +57,11 @@ AS
    *                            Support SAP4H transactions, add term code, add
    *                            original invoice source system, and others for
    *                            support queries
-   *  08/01/2020  Joe Kidd      CHG-000000: Bioverativ Integration
+   *  08/01/2020  Joe Kidd      CHG-0000000: Bioverativ Integration
    *                            Add Bioverative RxC Direct Credits, CCG Rebates,
    *                            and Biogen Medicaid
-   *                            Update Company Code filter
+   *  08/25/2020  Pravin Hujare CHG-0000000: SHIFT PHASE 2
+   *                            Add company code PR02 to the list of blocked company codes
    ****************************************************************************/
           -- ICW Fields (needed for interface queries)
           z.credit_num,
