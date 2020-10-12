@@ -1,13 +1,9 @@
-CREATE OR REPLACE PACKAGE      PKG_STG_MEDI AS
+CREATE OR REPLACE PACKAGE BIVV.pkg_stg_medi AS
 
    PROCEDURE p_main (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y');
 END;
-
-
 /
-
-
-CREATE OR REPLACE PACKAGE BODY      PKG_STG_MEDI AS
+CREATE OR REPLACE PACKAGE BODY BIVV.pkg_stg_medi AS
 
    c_program   CONSTANT conv_log_t.program%TYPE := 'BIVV.PKG_STG_MEDI';
    c_userid_BIVV  CONSTANT hcrs.user_t.user_id%TYPE := 'BIVV';
@@ -522,6 +518,7 @@ BEGIN
          rosi_flg ,
          pqas_flg ,
          est_check_mail_dt ,
+         cmt_txt,
          create_dt ,
          mod_by
       )
@@ -545,6 +542,7 @@ BEGIN
          c.rosi_flg ,
          c.pqas_flg ,
          c.est_check_mail_dt ,
+         c.cmt_txt,
          SYSDATE AS create_dt,
          c_userid_BIVV AS mod_by
       FROM BIVV_CHECK_REQ_V c
@@ -865,5 +863,4 @@ EXCEPTION
 END;
 
 END;
-
 /
