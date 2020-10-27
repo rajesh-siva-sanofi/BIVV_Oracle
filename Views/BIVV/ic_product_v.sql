@@ -8,6 +8,7 @@ CREATE OR REPLACE VIEW BIVV.IC_PRODUCT_V AS
  * MOD HISTORY
  *  Date        Modified by   Reason
  *  ----------  ------------  ------------------------------------------------
+ *  10.27.2020  JTronoski     Added hard-code purchase product dates
 ****************************************************************************/
 WITH prod_ndc11
   AS (-- Extract product information from the NDC-11 level
@@ -479,7 +480,22 @@ WITH prod_ndc11
              ,CAST ('N' AS VARCHAR (1)) potency_flg
              ,CAST ('VIAL' AS VARCHAR (10)) form
              ,CAST (prod_str AS VARCHAR (10)) strength
-             ,CAST (NULL AS DATE) purchase_prod_dt
+
+             ,CAST (CASE WHEN SUBSTR(ndc9,1,5) = '71104'
+                          AND SUBSTR(ndc9,6,4) IN ('0801','0806','0808')
+                         THEN TO_DATE('07302018','mmddyyyy')
+                         WHEN SUBSTR(ndc9,1,5) = '71104'
+                          AND SUBSTR(ndc9,6,4) IN ('0802','0807')
+                         THEN TO_DATE('06252018','mmddyyyy')
+                         WHEN SUBSTR(ndc9,1,5) = '71104'
+                          AND SUBSTR(ndc9,6,4) IN ('0803','0805','0809')
+                         THEN TO_DATE('06142018','mmddyyyy')
+                         WHEN SUBSTR(ndc9,1,5) = '71104'
+                          AND SUBSTR(ndc9,6,4) IN ('0804','0810','0911','0922','0933','0944','0966','0977')
+                         THEN TO_DATE('07312018','mmddyyyy')
+                    ELSE NULL
+                    END AS DATE) purchase_prod_dt
+
              ,CAST (NVL(ind_5i,'Y') AS VARCHAR (1)) nonrtl_drug_ind
              ,CAST (rte_5i AS VARCHAR (3)) nonrtl_route_of_admin
              ,CAST (fda_appl_num AS VARCHAR2(7)) fda_application_num
