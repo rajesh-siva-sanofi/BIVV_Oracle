@@ -8,7 +8,8 @@ CREATE OR REPLACE VIEW BIVV.IC_PRODUCT_V AS
  * MOD HISTORY
  *  Date        Modified by   Reason
  *  ----------  ------------  ------------------------------------------------
- *  10.27.2020  JTronoski     Added hard-code purchase product dates
+ *  10.27.2020  JTronoski     Added hard-coded purchase product dates
+ *  10.28.2020  JTronoski     Change sap_prod_cd from 'US12' to NULL
 ****************************************************************************/
 WITH prod_ndc11
   AS (-- Extract product information from the NDC-11 level
@@ -522,7 +523,7 @@ WITH prod_ndc11
              ,CAST ('Y' AS VARCHAR (1)) new_prod_flg
              ,CAST (SUBSTR(ndc11,1,5) || SUBSTR(ndc11,7,5) AS VARCHAR (10)) cosmis_ndc 
              ,CAST (NULL AS VARCHAR (30)) cosmis_descr
-             ,CAST ('US12' AS VARCHAR (4)) sap_prod_cd
+             ,CAST (NULL AS VARCHAR (4)) sap_prod_cd
              ,CAST ('US12' AS VARCHAR (4)) sap_company_cd
              ,CAST (NULL AS VARCHAR (4)) cars_sap_prod_cd
               -------------------------------------------------------------------------
