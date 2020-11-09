@@ -4,8 +4,8 @@
 -- Author	: John Tronoski, (IntegriChain)
 -- Created	: September, 2020
 --
--- Modified 	: 
---		  ...JTronoski 09.27.2020  (IntegriChain)
+-- Modified 	: Only load the Bioverativ labeler into these tables.
+--		  ...JTronoski 11.09.2020  (IntegriChain)
 --
 -- Purpose  	: This SQL will be used to load the Biogen and Bioverativ products from the 
 --                IntegriChain FLEX tables to the BIVV Staging Tables.
@@ -197,13 +197,11 @@ GRANT SELECT ON bivv.prod_price_t TO hcrs_connect, hcrs_crm_select, hcrs_data_en
 --------------------------------------------------------------------------------
 -- P-05: Insert profiles into bivv.prfl_t
 -- Create profile records
---   - Monthly AMP	-- 72 rows
---   - Quarterly AMP	-- 24 rows
---   - Quarterly BP	-- 24 rows
---   - Quarterly ASP	-- 24 rows	
---   - Quarterly NFAMP	-- 24 rows
---   - Annual NFAMP	-- 5 rows
---   - Annual FCP	-- 5 rows
+--   - Monthly AMP	-- 25 rows
+--   - Quarterly AMP/BP	-- 15 rows
+--   - Quarterly ASP	-- 9 rows
+--   - Quarterly NFAMP	-- 9 rows
+--   - Annual NFAMP/FCP	-- 1 row
 --------------------------------------------------------------------------------
 
 DROP TABLE bivv.prfl_t;
@@ -251,6 +249,7 @@ SELECT ((SELECT MAX(prfl_id) FROM hcrs.prfl_t) + rownum) prfl_id
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_1 IS NOT NULL) OR
                         (x.amp_mth_1 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT TO_CHAR( x.amp_mth_2_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_2_strt_dt,'"M"MM') tim_per_cd
                       ,TO_CHAR( x.amp_mth_2_strt_dt,'FMYYYY Month') || ' Bioverativ LOADED' prfl_nm
@@ -260,6 +259,7 @@ SELECT ((SELECT MAX(prfl_id) FROM hcrs.prfl_t) + rownum) prfl_id
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_2 IS NOT NULL) OR
                         (x.amp_mth_2 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT TO_CHAR( x.amp_mth_3_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_3_strt_dt,'"M"MM') tim_per_cd
                       ,TO_CHAR( x.amp_mth_3_strt_dt,'FMYYYY Month') || ' Bioverativ LOADED' prfl_nm
@@ -268,7 +268,8 @@ SELECT ((SELECT MAX(prfl_id) FROM hcrs.prfl_t) + rownum) prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_3 IS NOT NULL) OR
-                        (x.amp_mth_3 > 0)))
+                        (x.amp_mth_3 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
         ORDER BY begn_dt
        ) p
 ;
@@ -301,7 +302,8 @@ SELECT ((SELECT MAX(prfl_id) FROM bivv.prfl_t) + rownum) prfl_id
                                ,add_months(to_date(substr(year_qtr,1,4)||'01','YYYYMM'),3*(to_number(substr(year_qtr,5))-1)) begn_dt
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND amp_qtrly IS NOT NULL)
+                   AND amp_qtrly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
         ORDER BY begn_dt
        ) p
 ;
@@ -333,7 +335,8 @@ SELECT ((SELECT MAX(prfl_id) FROM bivv.prfl_t) + rownum) prfl_id
                                ,add_months(to_date(substr(year_qtr,1,4)||'01','YYYYMM'),3*(to_number(substr(year_qtr,5))-1)) begn_dt
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.asp_qrtly IS NOT NULL)
+                   AND x.asp_qrtly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
         ORDER BY begn_dt
        ) p
 ;
@@ -365,7 +368,8 @@ SELECT ((SELECT MAX(prfl_id) FROM bivv.prfl_t) + rownum) prfl_id
                                ,add_months(to_date(substr(year_qtr,1,4)||'01','YYYYMM'),3*(to_number(substr(year_qtr,5))-1)) begn_dt
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.nfamp_qrtly IS NOT NULL)
+                   AND x.nfamp_qrtly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
         ORDER BY begn_dt
        ) p
 ;
@@ -398,6 +402,7 @@ SELECT ((SELECT MAX(prfl_id) FROM bivv.prfl_t) + rownum) prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND x.nfamp_annual IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT DISTINCT year_qtr
                                ,SUBSTR(year_qtr,1,4) tim_per_cd
@@ -405,7 +410,8 @@ SELECT ((SELECT MAX(prfl_id) FROM bivv.prfl_t) + rownum) prfl_id
                                ,add_months(to_date(substr(year_qtr,1,4)||'01','YYYYMM'),3*(to_number(substr(year_qtr,5))-1)) begn_dt
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.fcp_annual IS NOT NULL)
+                   AND x.fcp_annual IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
         ORDER BY begn_dt
        ) p
 ;
@@ -877,6 +883,7 @@ CREATE TABLE bivv.prfl_prod_fmly_t
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_1 IS NOT NULL) OR
                                 (x.amp_mth_1 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104'
                         UNION
                         SELECT x.ndc11
                               ,TO_CHAR( x.amp_mth_2_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_2_strt_dt,'"M"MM') tim_per_cd
@@ -884,13 +891,15 @@ CREATE TABLE bivv.prfl_prod_fmly_t
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_2 IS NOT NULL) OR
                                 (x.amp_mth_2 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104'
                         UNION
                         SELECT x.ndc11
                               ,TO_CHAR( x.amp_mth_3_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_3_strt_dt,'"M"MM') tim_per_cd
                           FROM bivv.ic_pricing_t x
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_3 IS NOT NULL) OR
-                                (x.amp_mth_3 > 0))) ) x
+                                (x.amp_mth_3 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104') ) x
          WHERE p.tim_per_cd = x.tim_per_cd
            AND p.agency_typ_cd = 'MEDICAID'
            AND p.prcss_typ_cd = 'MED_MTHLY'
@@ -912,6 +921,7 @@ SELECT p.prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND amp_qtrly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT DISTINCT ndc11
                                ,SUBSTR(year_qtr,1,4) || 'Q' || SUBSTR(year_qtr,5,1) tim_per_cd
@@ -919,7 +929,8 @@ SELECT p.prfl_id
                               ,year_qtr
                               ,COALESCE(x.bp_qtrly, x.ddr_bp, x.ddr_parent_bp) bp_amt
                           FROM bivv.ic_pricing_t x
-                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr))
+                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
+                           AND SUBSTR(x.ndc11,1,5) = '71104')
                  WHERE bp_amt IS NOT NULL)
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
@@ -964,6 +975,7 @@ CREATE TABLE bivv.prfl_prod_t
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_1 IS NOT NULL) OR
                                 (x.amp_mth_1 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104'
                         UNION
                         SELECT x.ndc11
                               ,TO_CHAR( x.amp_mth_2_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_2_strt_dt,'"M"MM') tim_per_cd
@@ -971,13 +983,15 @@ CREATE TABLE bivv.prfl_prod_t
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_2 IS NOT NULL) OR
                                 (x.amp_mth_2 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104'
                         UNION
                         SELECT x.ndc11
                               ,TO_CHAR( x.amp_mth_3_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_3_strt_dt,'"M"MM') tim_per_cd
                           FROM bivv.ic_pricing_t x
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_3 IS NOT NULL) OR
-                                (x.amp_mth_3 > 0))) ) x
+                                (x.amp_mth_3 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104') ) x
          WHERE p.tim_per_cd = x.tim_per_cd
            AND p.agency_typ_cd = 'MEDICAID'
            AND p.prcss_typ_cd = 'MED_MTHLY'
@@ -1005,6 +1019,7 @@ SELECT p.prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND amp_qtrly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT DISTINCT ndc11
                                ,SUBSTR(year_qtr,1,4) || 'Q' || SUBSTR(year_qtr,5,1) tim_per_cd
@@ -1012,7 +1027,8 @@ SELECT p.prfl_id
                               ,year_qtr
                               ,COALESCE(x.bp_qtrly, x.ddr_bp, x.ddr_parent_bp) bp_amt
                           FROM bivv.ic_pricing_t x
-                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr))
+                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
+                           AND SUBSTR(x.ndc11,1,5) = '71104')
                  WHERE bp_amt IS NOT NULL)
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
@@ -1041,7 +1057,8 @@ SELECT p.prfl_id
                                ,SUBSTR(year_qtr,1,4) || 'Q' || SUBSTR(year_qtr,5,1) tim_per_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.asp_qrtly IS NOT NULL)
+                   AND x.asp_qrtly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'MEDICARE'
@@ -1069,7 +1086,8 @@ SELECT p.prfl_id
                                ,SUBSTR(year_qtr,1,4) || 'Q' || SUBSTR(year_qtr,5,1) tim_per_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.nfamp_qrtly IS NOT NULL)
+                   AND x.nfamp_qrtly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1097,7 +1115,8 @@ SELECT p.prfl_id
                                ,SUBSTR(year_qtr,1,4) tim_per_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.nfamp_annual IS NOT NULL)
+                   AND x.nfamp_annual IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1125,7 +1144,8 @@ SELECT p.prfl_id
                                ,SUBSTR(year_qtr,1,4) tim_per_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.fcp_annual IS NOT NULL)
+                   AND x.fcp_annual IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1170,6 +1190,7 @@ CREATE TABLE bivv.prfl_calc_prod_fmly_t
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_1 IS NOT NULL) OR
                                 (x.amp_mth_1 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104'
                         UNION
                         SELECT x.ndc11
                               ,TO_CHAR( x.amp_mth_2_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_2_strt_dt,'"M"MM') tim_per_cd
@@ -1177,13 +1198,15 @@ CREATE TABLE bivv.prfl_calc_prod_fmly_t
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_2 IS NOT NULL) OR
                                 (x.amp_mth_2 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104'
                         UNION
                         SELECT x.ndc11
                               ,TO_CHAR( x.amp_mth_3_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_3_strt_dt,'"M"MM') tim_per_cd
                           FROM bivv.ic_pricing_t x
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_3 IS NOT NULL) OR
-                                (x.amp_mth_3 > 0))) ) x
+                                (x.amp_mth_3 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104') ) x
          WHERE p.tim_per_cd = x.tim_per_cd
            AND p.agency_typ_cd = 'MEDICAID'
            AND p.prcss_typ_cd = 'MED_MTHLY'
@@ -1210,6 +1233,7 @@ SELECT p.prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND amp_qtrly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT DISTINCT ndc11
                                ,SUBSTR(year_qtr,1,4) || 'Q' || SUBSTR(year_qtr,5,1) tim_per_cd
@@ -1218,7 +1242,8 @@ SELECT p.prfl_id
                               ,year_qtr
                               ,COALESCE(x.bp_qtrly, x.ddr_bp, x.ddr_parent_bp) bp_amt
                           FROM bivv.ic_pricing_t x
-                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr))
+                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
+                           AND SUBSTR(x.ndc11,1,5) = '71104')
                  WHERE bp_amt IS NOT NULL)
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
@@ -1275,6 +1300,7 @@ SELECT p.prfl_id
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_1 IS NOT NULL) OR
                         (x.amp_mth_1 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT x.ndc11
                       ,TO_CHAR( x.amp_mth_2_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_2_strt_dt,'"M"MM') tim_per_cd
@@ -1282,13 +1308,15 @@ SELECT p.prfl_id
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_2 IS NOT NULL) OR
                         (x.amp_mth_2 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT x.ndc11
                       ,TO_CHAR( x.amp_mth_3_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_3_strt_dt,'"M"MM') tim_per_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_3 IS NOT NULL) OR
-                        (x.amp_mth_3 > 0))) ) x
+                        (x.amp_mth_3 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104') ) x
  WHERE p.tim_per_cd = x.tim_per_cd
    AND p.agency_typ_cd = 'MEDICAID'
    AND p.prcss_typ_cd = 'MED_MTHLY'
@@ -1317,6 +1345,7 @@ SELECT p.prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND amp_qtrly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT DISTINCT ndc11
                                ,SUBSTR(year_qtr,1,4) || 'Q' || SUBSTR(year_qtr,5,1) tim_per_cd
@@ -1325,7 +1354,8 @@ SELECT p.prfl_id
                               ,year_qtr
                               ,COALESCE(x.bp_qtrly, x.ddr_bp, x.ddr_parent_bp) bp_amt
                           FROM bivv.ic_pricing_t x
-                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr))
+                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
+                           AND SUBSTR(x.ndc11,1,5) = '71104')
                  WHERE bp_amt IS NOT NULL)
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
@@ -1355,7 +1385,8 @@ SELECT p.prfl_id
                                ,'ASP' calc_typ_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.asp_qrtly IS NOT NULL)
+                   AND x.asp_qrtly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'MEDICARE'
@@ -1384,7 +1415,8 @@ SELECT p.prfl_id
                                ,'NFAMP' calc_typ_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.nfamp_qrtly IS NOT NULL)
+                   AND x.nfamp_qrtly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1413,7 +1445,8 @@ SELECT p.prfl_id
                                ,'NFAMP' calc_typ_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.nfamp_annual IS NOT NULL)
+                   AND x.nfamp_annual IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1442,7 +1475,8 @@ SELECT p.prfl_id
                                ,'FCP' calc_typ_cd
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.fcp_annual IS NOT NULL)
+                   AND x.fcp_annual IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1485,6 +1519,7 @@ CREATE TABLE bivv.prfl_prod_fmly_calc_t
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_1 IS NOT NULL) OR
                                 (x.amp_mth_1 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104'
                         UNION
                         SELECT x.ndc11
                               ,TO_CHAR( x.amp_mth_2_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_2_strt_dt,'"M"MM') tim_per_cd
@@ -1493,6 +1528,7 @@ CREATE TABLE bivv.prfl_prod_fmly_calc_t
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_2 IS NOT NULL) OR
                                 (x.amp_mth_2 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104'
                         UNION
                         SELECT x.ndc11
                               ,TO_CHAR( x.amp_mth_3_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_3_strt_dt,'"M"MM') tim_per_cd
@@ -1500,7 +1536,8 @@ CREATE TABLE bivv.prfl_prod_fmly_calc_t
                           FROM bivv.ic_pricing_t x
                          WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                            AND ((x.amp_mth_3 IS NOT NULL) OR
-                                (x.amp_mth_3 > 0))) ) x
+                                (x.amp_mth_3 > 0))
+                           AND SUBSTR(x.ndc11,1,5) = '71104') ) x
          WHERE p.tim_per_cd = x.tim_per_cd
            AND p.agency_typ_cd = 'MEDICAID'
            AND p.prcss_typ_cd = 'MED_MTHLY'
@@ -1531,6 +1568,7 @@ SELECT p.prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND amp_qtrly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT DISTINCT ndc11
                                ,SUBSTR(year_qtr,1,4) || 'Q' || SUBSTR(year_qtr,5,1) tim_per_cd
@@ -1541,7 +1579,8 @@ SELECT p.prfl_id
                               ,year_qtr
                               ,COALESCE(x.bp_qtrly, x.ddr_bp, x.ddr_parent_bp) bp_amt
                           FROM bivv.ic_pricing_t x
-                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr))
+                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
+                           AND SUBSTR(x.ndc11,1,5) = '71104')
                  WHERE bp_amt IS NOT NULL)
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
@@ -1602,6 +1641,7 @@ SELECT p.prfl_id
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_1 IS NOT NULL) OR
                         (x.amp_mth_1 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT x.ndc11
                       ,TO_CHAR( x.amp_mth_2_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_2_strt_dt,'"M"MM') tim_per_cd
@@ -1610,6 +1650,7 @@ SELECT p.prfl_id
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_2 IS NOT NULL) OR
                         (x.amp_mth_2 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT x.ndc11
                       ,TO_CHAR( x.amp_mth_3_strt_dt,'YYYY"Q"Q') || TO_CHAR( x.amp_mth_3_strt_dt,'"M"MM') tim_per_cd
@@ -1617,7 +1658,8 @@ SELECT p.prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND ((x.amp_mth_3 IS NOT NULL) OR
-                        (x.amp_mth_3 > 0))) ) x
+                        (x.amp_mth_3 > 0))
+                   AND SUBSTR(x.ndc11,1,5) = '71104') ) x
  WHERE p.tim_per_cd = x.tim_per_cd
    AND p.agency_typ_cd = 'MEDICAID'
    AND p.prcss_typ_cd = 'MED_MTHLY'
@@ -1651,6 +1693,7 @@ SELECT p.prfl_id
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
                    AND amp_qtrly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104'
                 UNION
                 SELECT DISTINCT ndc11
                                ,SUBSTR(year_qtr,1,4) || 'Q' || SUBSTR(year_qtr,5,1) tim_per_cd
@@ -1661,7 +1704,8 @@ SELECT p.prfl_id
                               ,year_qtr
                               ,COALESCE(x.bp_qtrly, x.ddr_bp, x.ddr_parent_bp) bp_amt
                           FROM bivv.ic_pricing_t x
-                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr))
+                         WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
+                           AND SUBSTR(x.ndc11,1,5) = '71104')
                  WHERE bp_amt IS NOT NULL)
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
@@ -1697,7 +1741,8 @@ SELECT p.prfl_id
                                ,x.asp_qrtly calc_amt
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.asp_qrtly IS NOT NULL)
+                   AND x.asp_qrtly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'MEDICARE'
@@ -1731,7 +1776,8 @@ SELECT p.prfl_id
                                ,x.nfamp_qrtly calc_amt
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.nfamp_qrtly IS NOT NULL)
+                   AND x.nfamp_qrtly IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1765,7 +1811,8 @@ SELECT p.prfl_id
                                ,x.nfamp_annual calc_amt
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.nfamp_annual IS NOT NULL)
+                   AND x.nfamp_annual IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1799,7 +1846,8 @@ SELECT p.prfl_id
                                ,x.fcp_annual calc_amt
                   FROM bivv.ic_pricing_t x
                  WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
-                   AND x.fcp_annual IS NOT NULL)
+                   AND x.fcp_annual IS NOT NULL
+                   AND SUBSTR(x.ndc11,1,5) = '71104')
        ) xx
  WHERE p.tim_per_cd = xx.tim_per_cd
    AND p.agency_typ_cd = 'VA'
@@ -1841,7 +1889,8 @@ CREATE TABLE bivv.prfl_prod_bp_pnt_t
                                       ,year_qtr
                                       ,COALESCE(x.bp_qtrly, x.ddr_bp, x.ddr_parent_bp) bp_amt
                                   FROM bivv.ic_pricing_t x
-                                 WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr))
+                                 WHERE TO_NUMBER(x.base_amp_qtr) <= TO_NUMBER(x.year_qtr)
+                                   AND SUBSTR(x.ndc11,1,5) = '71104')
                          WHERE bp_amt IS NOT NULL)
                ) xx
          WHERE p.tim_per_cd = xx.tim_per_cd
