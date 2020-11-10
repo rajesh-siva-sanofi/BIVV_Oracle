@@ -4,8 +4,3 @@ SELECT 107 AS rpr_dspt_rsn_id --CALCULATED UNITS TEST
    ,v.dspt_seq_no, 1 as dspt_priority
 FROM bivv_dspt_v v;
 
---SELECT *
---FROM hcrs.dspt_rsn_t;
-
---SELECT *
---FROM bivv.bivv_dspt_rsn_v;

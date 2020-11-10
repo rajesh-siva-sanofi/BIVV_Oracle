@@ -3,49 +3,16 @@ SELECT t.pgm_id, t.ndc_lbl, t.period_id, t.reb_clm_seq_no, t.co_id, t.ln_itm_seq
    ,t.ndc_prod, t.ndc_pckg, t.claim_amt, t.int_amt, 0 AS int_owed_amt, 0 AS int_wrt_off_amt
    ,'N' AS int_owed_flg
 FROM bivv_valid_claim_v t
-WHERE t.dspt_flg = 'N'
-;
+WHERE t.dspt_flg = 'N';
+/
+
 CREATE OR REPLACE VIEW bivv.BIVV_DSPT_CHECK_REQ_V AS
 SELECT t.pgm_id, t.ndc_lbl, t.period_id, t.reb_clm_seq_no, t.co_id, t.ln_itm_seq_no, 1 AS dspt_seq_no
    ,t.ndc_prod, t.ndc_pckg, t.claim_amt, t.int_amt, 0 AS int_owed_amt, 0 AS int_wrt_off_amt
    ,'N' AS int_owed_flg
 FROM bivv_valid_claim_v t
-WHERE t.dspt_flg = 'Y'
-;
-CREATE OR REPLACE VIEW BIVV_CHECK_REQ_V2 AS
-WITH v AS (
-   SELECT
-      vc.check_id, vc.pgm_id, vc.co_id, vc.period_id 
---         v.pgm_id, v.period_id, v.ndc_lbl, v.co_id, v.reb_clm_seq_no
-      ,vc.paid_amt + vc.int_amt AS paid_amt
-   FROM valid_claim_chk_req_t vc
-   UNION ALL 
-   SELECT 
-      d.check_id, d.pgm_id, d.co_id, d.period_id 
---      d.pgm_id, d.period_id, d.ndc_lbl, d.co_id, d.reb_clm_seq_no
-      ,d.paid_amt + d.int_amt AS paid_amt
-   FROM dspt_check_req_t d)
-SELECT 
-   v.check_id, 'MA' AS check_req_stat_cd, 'RO' AS pymnt_catg_cd, NULL AS credit_num
-   ,SUM(v.paid_amt) AS check_req_amt, 0 AS cr_bal
-   ,p.last_day_period + 55 AS check_input_dt
-   ,p.last_day_period + 60 AS check_req_dt
-   ,p.last_day_period + 68 AS pcrss_dt
-   ,p.last_day_period + 69 AS conf_dt
-   ,p.last_day_period + 70 AS check_dt
-   ,p.last_day_period + 71 AS mail_dt
-   ,v.pgm_id, v.co_id
-   ,'NI' AS int_sel_meth_cd
-   ,0 AS man_int_amt
-   ,'Y' AS rosi_flg
-   ,'N' AS pqas_flg
-   ,p.last_day_period + 78 AS est_check_mail_dt
---   ,v.period_id, v.ndc_lbl, v.reb_clm_seq_no
-FROM v, hcrs.period_t p
-WHERE v.period_id = p.period_id
-GROUP BY v.check_id, v.pgm_id, v.co_id
-   ,p.last_day_period
-;
+WHERE t.dspt_flg = 'Y';
+/
 
 CREATE OR REPLACE VIEW BIVV_CHECK_REQ_V AS
 WITH 
@@ -117,9 +84,44 @@ SELECT
 FROM cr, src
 WHERE 1=1
    AND cr.pgm_id = src.hcrs_pgm_id
-   AND cr.first_day_period = src.quarter_date (+)
-;
+   AND cr.first_day_period = src.quarter_date (+);
+/
+
 /*
+CREATE OR REPLACE VIEW BIVV_CHECK_REQ_V2 AS
+WITH v AS (
+   SELECT
+      vc.check_id, vc.pgm_id, vc.co_id, vc.period_id 
+--         v.pgm_id, v.period_id, v.ndc_lbl, v.co_id, v.reb_clm_seq_no
+      ,vc.paid_amt + vc.int_amt AS paid_amt
+   FROM valid_claim_chk_req_t vc
+   UNION ALL 
+   SELECT 
+      d.check_id, d.pgm_id, d.co_id, d.period_id 
+--      d.pgm_id, d.period_id, d.ndc_lbl, d.co_id, d.reb_clm_seq_no
+      ,d.paid_amt + d.int_amt AS paid_amt
+   FROM dspt_check_req_t d)
+SELECT 
+   v.check_id, 'MA' AS check_req_stat_cd, 'RO' AS pymnt_catg_cd, NULL AS credit_num
+   ,SUM(v.paid_amt) AS check_req_amt, 0 AS cr_bal
+   ,p.last_day_period + 55 AS check_input_dt
+   ,p.last_day_period + 60 AS check_req_dt
+   ,p.last_day_period + 68 AS pcrss_dt
+   ,p.last_day_period + 69 AS conf_dt
+   ,p.last_day_period + 70 AS check_dt
+   ,p.last_day_period + 71 AS mail_dt
+   ,v.pgm_id, v.co_id
+   ,'NI' AS int_sel_meth_cd
+   ,0 AS man_int_amt
+   ,'Y' AS rosi_flg
+   ,'N' AS pqas_flg
+   ,p.last_day_period + 78 AS est_check_mail_dt
+--   ,v.period_id, v.ndc_lbl, v.reb_clm_seq_no
+FROM v, hcrs.period_t p
+WHERE v.period_id = p.period_id
+GROUP BY v.check_id, v.pgm_id, v.co_id
+   ,p.last_day_period;
+/
 
 WITH v AS (
    SELECT

@@ -9,7 +9,7 @@ SELECT
    ,v.pgm_id, v.ndc_lbl, v.period_id, v.reb_clm_seq_no, v.co_id, v.ln_itm_seq_no
    ,1 AS dspt_seq_no, v.item_prod_fmly_ndc as ndc_prod, v.item_prod_mstr_ndc as ndc_pckg
    ,v.total_units_paid as paid_units, v.adjitm_dispute_units as dspt_units, 0 AS wrt_off_units   
-FROM bivv_medi_claim_line_v v
+FROM bivv_medi_paid_line_v v
 WHERE v.dspt_flg = 'Y';
 
 -- main view
