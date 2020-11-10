@@ -54,6 +54,16 @@ BEGIN
       v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_MEDI_CLAIM_LINE_V';
    END IF;
 
+   -- validate all paid lines
+   SELECT COUNT(*) INTO v_cnt
+   FROM BIVV_MEDI_PAID_LINE_VAL_V v
+   WHERE nvl(v.val_msg, 'OK') LIKE 'ERR%';
+   pkg_util.p_saveLog('Non valid count for BIVV_MEDI_PAID_LINE_V: '||v_cnt, c_program, v_module);
+
+   IF v_cnt > 0 THEN
+      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_MEDI_PAID_LINE_V';
+   END IF;
+
    -- validate disputed lines view
    SELECT COUNT(*) INTO v_cnt
    FROM BIVV_DSPT_VAL_V v
@@ -203,11 +213,11 @@ BEGIN
       cl.reb_clm_seq_no ,
       cl.co_id ,
       cl.ln_itm_seq_no ,
-      cl.total_units_paid ,
-      cl.total_amt_paid ,
+      cl.submitem_units ,
+      cl.submitem_asking_dollars ,
       cl.reb_claim_ln_itm_stat_cd ,
-      cl.adjitm_auth_rx ,
-      cl.pgm_pur ,
+      cl.submitem_rx ,
+      cl.submitem_rx ,
       cl.reimbur_amt ,
       cl.corr_flg ,
       cl.item_prod_fmly_ndc ,
@@ -218,9 +228,9 @@ BEGIN
       cl.total_reimbur_amt
    FROM bivv_medi_claim_line_v cl,
       reb_claim_t c
-   WHERE c.pgm_id                 = cl.pgm_id
-      AND c.period_id                = cl.period_id
-      AND c.ndc_lbl                  = cl.ndc_lbl
+   WHERE c.pgm_id = cl.pgm_id
+      AND c.period_id = cl.period_id
+      AND c.ndc_lbl = cl.ndc_lbl
       AND cl.reb_claim_ln_itm_stat_cd = c.reb_claim_stat_cd;
 
    pkg_util.p_saveLog('Inserted REB_CLM_LN_ITM_T count: '||SQL%ROWCOUNT, c_program, v_module);
@@ -815,8 +825,7 @@ BEGIN
 
    -- validate source data
    IF nvl(a_valid_flg, 'Y') = 'Y' THEN
-      NULL;
---      p_validate;
+      p_validate;
    END IF;
 
    -- truncate all stage tables to prepare for new load if requested

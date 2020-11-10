@@ -64,3 +64,5 @@ END;
 
 END;
 /
+
+GRANT EXECUTE ON bivv.pkg_util TO HCRS;
