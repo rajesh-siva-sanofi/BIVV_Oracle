@@ -216,6 +216,44 @@ SELECT prfl_id, snpsht_id, prfl_stat_cd, agency_typ_cd, tim_per_cd, prcss_typ_cd
 ;
 
 --------------------------------------------------------------------------------
+-- This routine will increase the sequence for hcrs.prfl_t so that the value of
+-- the sequence is equal to the last prfl_id in hcrs.prfl_t.
+--------------------------------------------------------------------------------
+
+DECLARE
+   v_hcrs_cnt_start NUMBER := 0;
+   v_bivv_cnt_start NUMBER := 0;
+   v_bivv_cnt_end   NUMBER := 0;
+   v_cnt            NUMBER := 0;
+
+BEGIN
+  
+   SELECT MAX(prfl_id) 
+     INTO v_hcrs_cnt_start
+     FROM hcrs.prfl_t;
+
+   SELECT MIN(prfl_id) 
+     INTO v_bivv_cnt_start
+     FROM bivv.prfl_t;
+
+   SELECT MAX(prfl_id) 
+     INTO v_bivv_cnt_end
+     FROM bivv.prfl_t;
+
+   dbms_output.put_line( 'HCRS PRFL_ID Start: ' || v_hcrs_cnt_start);
+   dbms_output.put_line( 'BIVV PRFL_ID Start: ' || v_bivv_cnt_start);
+   dbms_output.put_line( 'BIVV PRFL_ID End: ' || v_bivv_cnt_end);
+   
+   LOOP
+      EXIT WHEN v_cnt = v_bivv_cnt_end;
+      SELECT hcrs.prfl_s.nextval INTO v_cnt FROM dual;
+   END LOOP;
+   dbms_output.put_line( 'Final HCRS PRFL_T Sequence Value: ' || v_cnt);
+
+END;
+/
+
+--------------------------------------------------------------------------------
 -- P-04: Insert Bioverativ Calculation Types into hcrs.prfl_calc_typ_t
 -- Create profile calculation records
 --------------------------------------------------------------------------------
