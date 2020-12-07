@@ -40,7 +40,7 @@ SELECT
       WHEN (SELECT COUNT(*) FROM hcrs.pgm_t p WHERE p.pgm_id = m.hcrs_pgm_id) = 0 THEN 'ERR: Program not found in HCRS'
       ELSE 'OK' 
    END AS val_msg
-   ,m.hcrs_pgm_id AS pgm_id, m.eff_dt AS pgm_eff_dt, m.end_dt AS pgm_end_dt
+   ,m.hcrs_pgm_id AS pgm_id, m.pgm_cd, m.pgm_nm, m.eff_dt AS pgm_eff_dt, m.end_dt AS pgm_end_dt
    ,v.*
 FROM v
    ,medi_pgms_map_v m
@@ -48,41 +48,24 @@ WHERE 1=1
    AND v.cont_num = m.cont_num (+)
    AND v.bunit_id_pri = m.state_cd (+)
    -- for these 5 pgms only show eligbility where claims exists because otherwise we get eligbility for all 51 states
-   AND CASE WHEN v.cont_internal_id IN ('VAMCOCCCPL', 'VAMCOCCCPLEXP', 'VAMCOMD4', 'VAMCOMD4EXP', 'WICDP') THEN v.adjitems_cnt ELSE 1 END > 0
-   -- TODO TODO!!! before going to UAT and production. These programs are mapped with claim lines. They just were not created in HCRS in time for SIT
---   AND v.cont_num NOT IN (36002, 36001, 22005, 22004, 22002)
+--   AND CASE WHEN v.cont_internal_id IN ('VAMCOCCCPL', 'VAMCOCCCPLEXP', 'VAMCOMD4', 'VAMCOMD4EXP', 'WICDP') THEN v.adjitems_cnt ELSE 1 END > 0
+   AND CASE 
+      -- for these pgms only show eligbility for the states they are intented
+      WHEN v.cont_internal_id IN ('VAMCOCCCPL', 'VAMCOCCCPLEXP', 'VAMCOMD4', 'VAMCOMD4EXP') AND v.bunit_id_pri = 'VA' THEN 1
+      WHEN v.cont_internal_id IN ('WICDP', 'WISENIOR') AND v.bunit_id_pri = 'WI' THEN 1 
+      WHEN v.cont_internal_id IN ('KYMCOSH') AND v.bunit_id_pri = 'KY' THEN 1
+      WHEN v.cont_internal_id IN ('VAMCOCCCPL', 'VAMCOCCCPLEXP', 'VAMCOMD4', 'VAMCOMD4EXP', 'WICDP', 'WISENIOR', 'KYMCOSH') THEN 0 -- exclude these programs for any other states            
+      ELSE 1 END > 0 
+   AND v.cont_internal_id NOT IN (SELECT cont_internal_id FROM bivv.bivv_cont_excl_v) -- exclude not needed contracts
 ;
 
 CREATE OR REPLACE VIEW BIVV_PGM_PROD_V AS 
-SELECT pgm_id, ndc_lbl, ndc_prod, ndc_pckg
+SELECT pgm_id, pgm_cd, pgm_nm, ndc_lbl, ndc_prod, ndc_pckg
    -- set eff date to 1/1/2018 (Q1 2018) for products launched before 2018. For products after 2018 the set the eff_dt to first day of a launch qtr.
    ,GREATEST (TRUNC(first_dt_sld, 'Q'), to_date('1/1/2018','mm/dd/yyyy'), pgm_eff_dt) AS eff_dt
    -- set to earliest of prod expiration (last day of qtr), pgm expiration dt, or "end of time"
    ,LEAST (NVL((ADD_MONTHS(TRUNC(term_dt, 'Q'), 3) - 1), pgm_end_dt), to_date('1/1/2100','mm/dd/yyyy')) AS end_dt
    ,first_dt_sld, term_dt, pgm_eff_dt, pgm_end_dt
+   ,cont_internal_id
 FROM BIVV_PGM_PROD_VAL_V
 WHERE NVL(val_msg,'OK') = 'OK';
-
---SELECT *
---FROM 
---   BIVV_PGM_PROD_VAL_V
---WHERE 1=1
---   AND NVL(val_msg,'OK') LIKE 'ERR%' --'HCRS program not mapped, but no claim lines found'
---   AND cont_num IN (5)
---   AND pgm_id = 1815
---   AND bunit_id_pri = 'CA'
---ORDER BY 1 DESC,2,3,4
---;
-
---SELECT *
---FROM medi_pgms_map_v t
---WHERE t.cont_num = 1004;
-
---
---UPDATE hcrs.prod_mstr_t pm
---SET pm.first_dt_sld = (SELECT p.first_sale_date_ndc11 FROM bivvgp.product p WHERE p.ndc11 = pm.ndc_lbl||pm.ndc_prod||pm.ndc_pckg)
---   ,pm.first_dt_sld_dir = (SELECT p.first_sale_date_ndc11 FROM bivvgp.product p WHERE p.ndc11 = pm.ndc_lbl||pm.ndc_prod||pm.ndc_pckg)
---WHERE pm.ndc_lbl = '71104'
---   AND pm.ndc_prod = '0801';
---COMMIT;
-

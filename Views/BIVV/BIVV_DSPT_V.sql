@@ -16,5 +16,5 @@ WHERE v.dspt_flg = 'Y';
 CREATE OR REPLACE VIEW bivv.BIVV_DSPT_V AS
 SELECT *
 FROM BIVV_DSPT_VAL_V
-WHERE NVL(val_msg,'OK') = 'OK';
+WHERE NVL(val_msg,'OK') NOT LIKE 'ERR%';
 

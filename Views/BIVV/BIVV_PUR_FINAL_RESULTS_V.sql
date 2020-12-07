@@ -12,6 +12,8 @@ WITH src AS (
       ,cq.calcqtr_num_prior
       ,cppt.cont_num
       ,c.cont_title
+      ,c.cont_internal_id
+      ,(SELECT COUNT(*) FROM bivvcars.adjitem ai WHERE ai.cont_num = c.cont_num) AS adjitems_cnt
    FROM
       bivvcars.calcqtr cq
       ,bivvcars.prod p
@@ -35,13 +37,15 @@ val AS (
 SELECT 
    CASE 
       WHEN (SELECT cnt FROM val WHERE val.cont_num = src.cont_num AND val.ndc11 = src.ndc11 AND val.qtr = src.qtr) > 1 THEN 'ERR: Multiple URAs. Adjust query' 
-      WHEN pm.hcrs_pgm_id IS NULL THEN 'ERR: Contract not mapped'
+      WHEN pm.hcrs_pgm_id IS NULL AND adjitems_cnt > 0 THEN 'ERR: Contract not mapped'
+      WHEN pm.hcrs_pgm_id IS NULL AND adjitems_cnt = 0 THEN 'WARN: Contract not mapped, no claim lines exist, URAs won''t be loaded'
    ELSE 'OK' END AS val_msg
    ,DECODE(src.cont_num, 1, 1, pm.hcrs_pgm_id) AS pgm_id -- load Medicaid FDRL URAs under Alaska Fdrl program
    ,src.*
 FROM src
    ,medi_pgms_map_v pm
 WHERE src.cont_num = pm.cont_num (+)
+   AND src.cont_internal_id NOT IN (SELECT cont_internal_id FROM bivv.bivv_cont_excl_v) -- exclude not needed contracts
 ;
 
 CREATE OR REPLACE VIEW BIVV_PUR_FINAL_RESULTS_V AS
@@ -49,15 +53,14 @@ SELECT
    DISTINCT
    p.period_id, p.first_day_period AS per_begin_dt, p.last_day_period AS per_end_dt
    ,s.pgm_id -- load Medicaid FDRL URAs under Alaska Fdrl program
---   ,DECODE(s.cont_num, 1, 1, pm.hcrs_pgm_id) AS pgm_id -- load Medicaid FDRL URAs under Alaska Fdrl program
    ,SUBSTR(s.ndc11,1,5) AS ndc_lbl, SUBSTR(s.ndc11,6,4) AS ndc_prod, SUBSTR(s.ndc11,10,2) AS ndc_pckg
-   ,s.rpu AS calc_amt, p.last_day_period + 1 AS eff_dt, to_date('1/1/2100','mm/dd/yyyy') AS end_dt, 'HCRS' AS src_sys, s.calcqtr_num AS src_sys_unique_id
-   ,s.cont_num, s.cont_title, s.formula_name
+   ,s.rpu AS calc_amt, p.last_day_period + 1 AS eff_dt, to_date('1/1/2100','mm/dd/yyyy') AS end_dt
+   ,'BIVV' AS src_sys -- this is needed for HCRS.PUR_EVALUATE_V view
+   ,s.calcqtr_num AS src_sys_unique_id
+   ,s.cont_num, s.cont_title, s.cont_internal_id, s.formula_name
 FROM bivv_pur_final_results_val_v s
---   ,medi_pgms_map_v pm
    ,hcrs.period_t p
 WHERE NVL(s.val_msg, 'OK') = 'OK'
---   AND s.cont_num = pm.cont_num
    AND s.calcqtrhdr_dt_start = p.first_day_period;
 
 --SELECT COUNT(*)
