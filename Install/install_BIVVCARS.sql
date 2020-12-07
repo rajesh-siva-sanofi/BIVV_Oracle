@@ -25,13 +25,13 @@ SELECT * FROM global_name;
 SELECT SYSDATE FROM dual;
 
 -- views
-@@V_TTBH.sql
-@@V_TTBC.sql
-@@V_CONT.sql
-@@V_MEDI_ADJREQ_BY_STLMT_ALL.sql
+@@../Views/BIVVCARS/V_TTBH.sql
+@@../Views/BIVVCARS/V_TTBC.sql
+@@../Views/BIVVCARS/V_CONT.sql
+@@../Views/BIVVCARS/V_MEDI_ADJREQ_BY_STLMT_ALL.sql
 
 -- grants access to BIVV
-@@../grants.sql 'BIVVCARS'
+@@grants.sql 'BIVVCARS'
 
 BEGIN
    dbms_utility.compile_schema('BIVVCARS', FALSE);  -- only compile invalid

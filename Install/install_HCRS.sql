@@ -25,23 +25,24 @@ SELECT * FROM global_name;
 SELECT SYSDATE FROM dual;
 
 -- Tables for iQVIA
-@@BIVV_CLAIM_HIST_T.sql
-@@BIVV_PYMNT_HIST_T.sql
+@@../Tables/HCRS/BIVV_CLAIM_HIST_T.sql
+@@../Tables/HCRS/BIVV_PYMNT_HIST_T.sql
 
 -- Views for iQVIA
-@@BIVV_CLAIM_HIST_V.sql
-@@BIVV_PYMNT_HIST_V.sql
+@@../Views/HCRS/BIVV_CLAIM_HIST_V.sql
+@@../Views/HCRS/BIVV_PYMNT_HIST_V.sql
 
 -- recon views
-@@BIVV_RECON_URA_LOAD_V.sql
-@@BIVV_RECON_CLAIM_LOAD_V.sql
-@@BIVV_RECON_TOTALS_V.sql
+@@../Views/HCRS/BIVV_RECON_URA_LOAD_V.sql
+@@../Views/HCRS/BIVV_RECON_CLAIM_LOAD_V.sql
+@@../Views/HCRS/BIVV_RECON_TOTALS_BY_NDC_QTR_V.sql
+@@../Views/HCRS/BIVV_RECON_TOTALS_BY_NDC_V.sql
 
 -- modified existing HCRS views
-@@pur_evaluate_v.sql
+@@../Views/HCRS/pur_evaluate_v.sql
 
 -- main packages
-@@pkg_load_bivv_medi_data.sql
+@@../Packages/HCRS/pkg_load_bivv_medi_data.sql
 
 -- JT's product and pricing scripts (no other objects required for these)
 @@install_product_hcrs.sql
@@ -49,7 +50,7 @@ SELECT SYSDATE FROM dual;
 
 -- grants
 -- grants access to BIVV
-@@../grants.sql 'HCRS'
+@@grants.sql 'HCRS'
 
 BEGIN
    dbms_utility.compile_schema('HCRS', FALSE);  -- only compile invalid

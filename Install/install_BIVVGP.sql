@@ -25,10 +25,10 @@ SELECT * FROM global_name;
 SELECT SYSDATE FROM dual;
 
 -- views
-@@product.sql
+@@../Views/BIVVGP/product.sql
 
 -- grants access to BIVV
-@@../grants.sql 'BIVVGP'
+@@grants.sql 'BIVVGP'
 
 BEGIN
    dbms_utility.compile_schema('BIVVGP', FALSE);  -- only compile invalid
