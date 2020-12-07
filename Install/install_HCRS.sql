@@ -32,12 +32,24 @@ SELECT SYSDATE FROM dual;
 @@BIVV_CLAIM_HIST_V.sql
 @@BIVV_PYMNT_HIST_V.sql
 
+-- recon views
+@@BIVV_RECON_URA_LOAD_V.sql
+@@BIVV_RECON_CLAIM_LOAD_V.sql
+@@BIVV_RECON_TOTALS_V.sql
+
+-- modified existing HCRS views
+@@pur_evaluate_v.sql
+
 -- main packages
 @@pkg_load_bivv_medi_data.sql
 
--- grants
-GRANT EXECUTE ON hcrs.pkg_load_bivv_medi_data TO BIVV;
+-- JT's product and pricing scripts (no other objects required for these)
+@@install_product_hcrs.sql
+@@install_pricing_hcrs.sql
 
+-- grants
+-- grants access to BIVV
+@@../grants.sql 'HCRS'
 
 BEGIN
    dbms_utility.compile_schema('HCRS', FALSE);  -- only compile invalid
