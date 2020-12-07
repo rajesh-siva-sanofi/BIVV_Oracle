@@ -77,12 +77,12 @@ BEGIN
    -- validate URAs
    SELECT COUNT(*) INTO v_cnt
    FROM BIVV_PUR_FINAL_RESULTS_VAL_V v
-   WHERE nvl(v.val_msg, 'OK') NOT IN ('OK','WARN');
+   WHERE nvl(v.val_msg, 'OK') LIKE 'ERR%';
    
    pkg_util.p_saveLog('Non valid count for BIVV_PUR_FINAL_RESULTS_VAL_V: '||v_cnt, c_program, v_module);
 
    IF v_cnt > 0 THEN
-      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_PGM_PROD_VAL_V';
+      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_PUR_FINAL_RESULTS_VAL_V';
    END IF;
 
    IF length(v_msg) > 0 THEN
@@ -217,7 +217,7 @@ BEGIN
       cl.submitem_asking_dollars ,
       cl.reb_claim_ln_itm_stat_cd ,
       cl.submitem_rx ,
-      cl.submitem_rx ,
+      cl.submitem_rpu ,
       cl.reimbur_amt ,
       cl.corr_flg ,
       cl.item_prod_fmly_ndc ,
@@ -242,9 +242,6 @@ EXCEPTION
       RAISE;
 END;
 /*
-Target Table:valid_claim_t
-Source object:bivv_valid_claim_v which has transaction records replica of view "Bivv_medi_claim_line_v"
-Filter Condition: All
 */
 PROCEDURE p_load_reb_valid_claim IS
    v_module    conv_log_t.module%TYPE := 'p_load_reb_valid_claim';
