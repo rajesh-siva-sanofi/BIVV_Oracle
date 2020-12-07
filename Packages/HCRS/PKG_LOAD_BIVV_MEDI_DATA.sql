@@ -2,7 +2,7 @@ CREATE OR REPLACE PACKAGE HCRS.pkg_load_bivv_medi_data AS
 
    PROCEDURE p_main (a_clean_flg VARCHAR2 DEFAULT 'Y');
 
-   PROCEDURE p_cleanup_data;
+--   PROCEDURE p_cleanup_data;
 
 END;
 /
@@ -821,9 +821,11 @@ BEGIN
    FOR chk_cur IN (
       SELECT check_id FROM valid_claim_chk_req_t
       WHERE ndc_lbl = c_bivv_ndc_lbl
+         AND reb_clm_seq_no = 1 -- remove only originally imported checks
       UNION
       SELECT check_id FROM dspt_check_req_t
-      WHERE ndc_lbl = c_bivv_ndc_lbl)
+      WHERE ndc_lbl = c_bivv_ndc_lbl
+         AND reb_clm_seq_no = 1)
    LOOP
 
 --      bivv.pkg_util.p_saveLog('Working on check id: '||chk_cur.check_id, c_program, v_module);
@@ -876,23 +878,28 @@ BEGIN
    bivv.pkg_util.p_saveLog('Deleted from CHECK_REQ_T: '||v_check_req_cnt||' rows', c_program, v_module);
 
    DELETE FROM hcrs.dspt_rsn_t
-   WHERE ndc_lbl = c_bivv_ndc_lbl;
+   WHERE ndc_lbl = c_bivv_ndc_lbl
+      AND reb_clm_seq_no = 1;
    bivv.pkg_util.p_saveLog('Deleted from DSPT_RSN_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
    DELETE FROM hcrs.dspt_t
-   WHERE ndc_lbl = c_bivv_ndc_lbl;
+   WHERE ndc_lbl = c_bivv_ndc_lbl
+      AND reb_clm_seq_no = 1;
    bivv.pkg_util.p_saveLog('Deleted from DSPT_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
    DELETE FROM hcrs.valid_claim_t
-   WHERE ndc_lbl = c_bivv_ndc_lbl;
+   WHERE ndc_lbl = c_bivv_ndc_lbl
+      AND reb_clm_seq_no = 1;
    bivv.pkg_util.p_saveLog('Deleted from VALID_CLAIM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
    DELETE FROM hcrs.reb_clm_ln_itm_t
-   WHERE ndc_lbl = c_bivv_ndc_lbl;
+   WHERE ndc_lbl = c_bivv_ndc_lbl
+      AND reb_clm_seq_no = 1;
    bivv.pkg_util.p_saveLog('Deleted from REB_CLM_LN_ITM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
    DELETE FROM hcrs.reb_claim_t
-   WHERE ndc_lbl = c_bivv_ndc_lbl;
+   WHERE ndc_lbl = c_bivv_ndc_lbl
+      AND reb_clm_seq_no = 1;
    bivv.pkg_util.p_saveLog('Deleted from REB_CLAIM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
    DELETE FROM hcrs.pur_final_results_t t
