@@ -11,17 +11,20 @@ BEGIN
       ) LOOP
    
          BEGIN
-            v_sql := 'GRANT SELECT ON '||cur.object_name||' TO BIVV';
+            v_sql := 'GRANT SELECT ON '||cur.object_name||' TO BIVV, HCRS_SELECT, HCRS_READ';
 
             IF cur.object_type = 'VIEW' THEN 
 
                v_sql := v_sql || ' with grant option';
 --            dbms_output.put_line (a_user||'-'||cur.object_type||': '||v_sql);   
 
-         END IF;
+			END IF;
 
-         EXECUTE IMMEDIATE v_sql;
-   
+			EXECUTE IMMEDIATE v_sql;
+		 
+            v_sql := 'GRANT SELECT ON '||cur.object_name||' TO HCRS_SELECT, HCRS_READ';
+			EXECUTE IMMEDIATE v_sql;
+			
          EXCEPTION 
             WHEN OTHERS THEN
                dbms_output.put_line ('ERROR: '||v_sql||'. SQLERRM: '||SQLERRM);
@@ -44,6 +47,4 @@ BEGIN
    grant_select ('&1');
 END;
 /
-
---REVOKE SELECT ON hcrs.check_s FROM BIVV;
 
