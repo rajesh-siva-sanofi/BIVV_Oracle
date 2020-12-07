@@ -11,7 +11,7 @@ BEGIN
       ) LOOP
    
          BEGIN
-            v_sql := 'GRANT SELECT ON '||cur.object_name||' TO BIVV, HCRS_SELECT, HCRS_READ';
+            v_sql := 'GRANT SELECT ON '||cur.object_name||' TO BIVV';
 
             IF cur.object_type = 'VIEW' THEN
                v_sql := v_sql || ' with grant option';
