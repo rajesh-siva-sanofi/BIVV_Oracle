@@ -31,16 +31,10 @@ FROM medi_pgms_map_t t
 WHERE 1=1
    AND t.cont_num IS NOT NULL
    AND t.hcrs_pgm_id IS NOT NULL
-   AND t.hcrs_pgm_id = p.pgm_id
-;
+   AND t.hcrs_pgm_id = p.pgm_id;
 
 -- Grant/Revoke object privileges 
 GRANT SELECT ON BIVV.MEDI_PGMS_MAP_T TO HCRS_SELECT;
 GRANT SELECT ON BIVV.MEDI_PGMS_MAP_V TO HCRS_SELECT;
-
---SELECT * FROM medi_pgms_map_v
---WHERE 1=1
---   AND cont_num = 1004 -- MEDI FDRL
---ORDER BY state_cd, cont_num;
 
 
