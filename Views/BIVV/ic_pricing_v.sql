@@ -8,6 +8,7 @@ CREATE OR REPLACE VIEW BIVV.IC_PRICING_V AS
  * MOD HISTORY
  *  Date        Modified by   Reason
  *  ----------  ------------  ------------------------------------------------
+ *  12.14.2020  JTronoski     Added uom_num filters to select from bivvcars.pbasis
 ****************************************************************************/
 WITH ddr_qtr_data
   AS (-- Extract quarterly amp/bp data from ddr table
@@ -162,8 +163,10 @@ WITH ddr_qtr_data
                      -- g.pbasiscd_num 23 = AMP - Quarterly
                      -- g.pbasiscd_num 1033 = AMP_5i - Quarterly
                      -- g.pbasiscd_num 24 = BP - Quarterly 
+                     -- g.uom_num = 1 - Unit
                      -- ========================================
                  AND g.pbasiscd_num IN (23,24,1033)
+                 AND g.uom_num = 1
                  AND p.pident_id_pri = 'NDC-11'
                  AND s.status_abbr = 'ACT')
       GROUP BY ndc11, ndc9, year_qtr
@@ -673,9 +676,11 @@ WITH ddr_qtr_data
                      -- ========================================
                      -- g.pbasiscd_num 5 = WAC
                      -- g.pbasiscd_num 33 = WAC Unit
+                     -- g.uom_num = 3 = Unit 
                      -- ========================================
                  AND g.pbasiscd_num IN (5,33)
                  AND p.pident_id_pri = 'NDC-11'
+                 AND g.uom_num = 3
                  AND s.status_abbr = 'ACT')
       GROUP BY ndc11, ndc9, year_qtr
 --     ) SELECT COUNT(*) OVER () cnt, ic_rm_wac.* 
