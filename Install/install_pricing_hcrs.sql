@@ -4,8 +4,8 @@
 -- Author	: John Tronoski, (IntegriChain)
 -- Created	: September, 2020
 --
--- Modified 	: 
---		  ...JTronoski 09.27.2020  (IntegriChain)
+-- Modified 	: Modified the Insert in P-02: Insert Bioverativ WAC prices into hcrs.prod_price_t
+--		  ...JTronoski 12.16.2020  (IntegriChain)
 --
 -- Purpose  	: This SQL will be used to load the Biogen and Bioverativ products from the 
 --                IntegriChain FLEX tables to the BIVV Staging Tables.
@@ -179,28 +179,20 @@ SELECT ndc_lbl, ndc_prod, period_id, trnsmsn_seq_no, prod_trnsmsn_stat_cd, prod_
 -- P-02: Insert Bioverativ WAC prices into hcrs.prod_price_t
 --------------------------------------------------------------------------------
 
+
 -- Insert WAC
 INSERT INTO hcrs.prod_price_t
 (ndc_lbl, ndc_prod, ndc_pckg, prod_price_typ_cd, eff_dt, end_dt, price_amt, rec_src_ind)
 SELECT pp.ndc_lbl, pp.ndc_prod, pp.ndc_pckg, pp.prod_price_typ_cd, pp.eff_dt, pp.end_dt, pp.price_amt, pp.rec_src_ind
   FROM bivv.prod_price_t pp
-,
-(SELECT ndc_lbl, ndc_prod, ndc_pckg, prod_price_typ_cd, eff_dt, end_dt, price_amt
-   FROM (SELECT ndc_lbl, ndc_prod, ndc_pckg, prod_price_typ_cd, eff_dt, end_dt, price_amt
-           FROM bivv.prod_price_t 
-         MINUS
-         SELECT ndc_lbl, ndc_prod, ndc_pckg, prod_price_typ_cd, eff_dt, end_dt, price_amt
-           FROM hcrs.prod_price_t 
-          WHERE ndc_lbl = '71104'
-         )
-) x
- WHERE pp.ndc_lbl = x.ndc_lbl
-   AND pp.ndc_prod = x.ndc_prod
-   AND pp.ndc_pckg = x.ndc_pckg
-   AND pp.prod_price_typ_cd = x.prod_price_typ_cd
-   AND pp.eff_dt = x.eff_dt
-   AND pp.end_dt = x.end_dt
-   AND pp.price_amt = x.price_amt
+ WHERE NOT EXISTS (SELECT 'x'
+                     FROM hcrs.prod_price_t x
+                    WHERE x.ndc_lbl = pp.ndc_lbl
+                      AND x.ndc_prod = pp.ndc_prod
+                      AND x.ndc_pckg = pp.ndc_pckg
+                      AND x.prod_price_typ_cd = pp.prod_price_typ_cd
+                      AND x.eff_dt = pp.eff_dt
+                      AND x.ndc_lbl = '71104')
 ;
 
 --------------------------------------------------------------------------------
