@@ -44,11 +44,13 @@ SELECT SYSDATE FROM dual;
 -- main packages
 @@../Packages/HCRS/pkg_load_bivv_medi_data.sql
 
+-- install clotting factor URA enhancement
+@@install_HCRS_CF_update.sql
+
 -- JT's product and pricing scripts (no other objects required for these)
 @@install_product_hcrs.sql
 @@install_pricing_hcrs.sql
 
--- grants
 -- grants access to BIVV
 @@grants.sql 'HCRS'
 

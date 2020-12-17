@@ -28,7 +28,6 @@ SELECT * FROM global_name;
 SELECT SYSDATE FROM dual;
 
 -- Add/modify columns for Clotting Factor (CF)
---ALTER TABLE HCRS.PROD_FMLY_T DROP COLUMN CLOTTING_FACTOR_IND;
 ALTER TABLE HCRS.PROD_FMLY_T ADD CLOTTING_FACTOR_IND VARCHAR2(1);
 -- for some reason I get ORA-28133 if I do it in one statement, works fine if split into two.
 ALTER TABLE HCRS.PROD_FMLY_T MODIFY CLOTTING_FACTOR_IND DEFAULT 'N';
@@ -36,25 +35,9 @@ ALTER TABLE HCRS.PROD_FMLY_T MODIFY CLOTTING_FACTOR_IND DEFAULT 'N';
 -- Add comments to the columns 
 COMMENT ON COLUMN HCRS.PROD_FMLY_T.CLOTTING_FACTOR_IND IS 'Indicates whether an NDC family is a clotting factor treatment';
 
--- Packages
-@@pkg_ui_dm_pur_catg_comp_val.sql
-@@pkg_pur_calc.sql
-
 -- update all products accordingly
 UPDATE hcrs.prod_fmly_t f
 SET f.clotting_factor_ind = DECODE (f.ndc_lbl, '71104', 'Y', 'N');
-
---SELECT f.clotting_factor_ind, COUNT(*)
---FROM hcrs.prod_fmly_t f
---GROUP BY f.clotting_factor_ind;
-
---SELECT f.ndc_lbl, f.ndc_prod, f.line_extension_ind, f.clotting_factor_ind, f.*
---FROM 
---   hcrs.prod_fmly_t f
-----   hcrs.drug_catg_grp_asgnmnt_t
---WHERE 1=1
---   AND f.ndc_lbl||'-'||f.ndc_prod IN ('71104-0911', '00024-5401')
-----   AND f.line_extension_ind IS NULL;
 
 -- 1. add new drug catg group for reduced %
 SELECT * FROM hcrs.drug_catg_grp_t t;
@@ -104,17 +87,23 @@ WHERE t.formula_id = 107 -- Federal URA with TCAP
 ;
 
 -- Reverse changes
---DELETE FROM hcrs.pur_catg_comp_val_t t WHERE t.drug_catg_grp_cd = 'RP';
---DELETE FROM hcrs.drug_catg_grp_asgnmnt_t t WHERE t.drug_catg_grp_cd = 'RP';
---DELETE FROM hcrs.drug_catg_grp_t WHERE drug_catg_grp_cd = 'RP';
---ALTER TABLE HCRS.PROD_FMLY_T DROP COLUMN medi_reduced_pct;
+--DELETE FROM hcrs.pur_catg_comp_val_t t WHERE t.drug_catg_grp_cd = 'CF';
+--DELETE FROM hcrs.drug_catg_grp_asgnmnt_t t WHERE t.drug_catg_grp_cd = 'CF';
+--DELETE FROM hcrs.drug_catg_grp_t WHERE drug_catg_grp_cd = 'CF';
+--ALTER TABLE HCRS.PROD_FMLY_T DROP COLUMN CLOTTING_FACTOR_IND;
 --@@..\Oracle\prod\pkg_pur_calc.sql
 --@@..\Oracle\prod\pkg_ui_dm_pur_catg_comp_val.sql
+
+-- Packages
+@@../Packages/HCRS/pkg_ui_dm_pur_catg_comp_val.sql
+@@../Packages/HCRS/pkg_pur_calc.sql
 
 BEGIN
    dbms_utility.compile_schema('HCRS', FALSE);  -- only compile invalid
 END;
 /
+
+COMMIT;
 
 -- What time did this end running?
 SELECT SYSDATE FROM dual;
