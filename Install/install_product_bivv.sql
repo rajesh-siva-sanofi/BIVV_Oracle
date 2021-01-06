@@ -4,8 +4,12 @@
 -- Author	: John Tronoski, (IntegriChain)
 -- Created	: September, 2020
 --
--- Modified 	: 
---		  ...JTronoski 09.27.2020  (IntegriChain)
+-- Modified 	: Modified the creation of the table bivv.prod_fmly_ppaca_t
+--                  - The column eff_end_dt is now defaulted to 01.01.2100
+--                  - The column tim_per_end_dt is now defaulted to 01.01.2100
+--                Modified the creation of the table bivv.co_prod_mstr_t
+--                  - The column eff_dt is now the 1st day of the quarter of the product market entry date
+--		  ...JTronoski (IntegriChain) 01.06.2021
 --
 -- Purpose  	: This SQL will be used to load the Biogen and Bioverativ products from the 
 --                IntegriChain FLEX tables to the BIVV Staging Tables.
@@ -95,7 +99,7 @@ CREATE TABLE bivv.co_prod_mstr_t
     AS (SELECT SUBSTR(ndc,1,5) ndc_lbl
               ,SUBSTR(ndc,6,4) ndc_prod
               ,SUBSTR(ndc,10,2) ndc_pckg
-              ,trunc(add_months(add_months(trunc(sysdate,'Y') -1 ,to_number(to_char(sysdate,'Q')) * 3),-2),'MM') eff_dt
+              ,TRUNC(mrkt_entry_dt_ndc11, 'q') eff_dt
               ,to_date('2100-01-01','yyyy-mm-dd') end_dt
               ,121 co_id
           FROM bivv.ic_product_t);
@@ -159,9 +163,9 @@ CREATE TABLE bivv.prod_fmly_ppaca_t
     AS (SELECT SUBSTR(ndc,1,5) ndc_lbl
               ,SUBSTR(ndc,6,4) ndc_prod
               ,drug_catg_eff_dt eff_bgn_dt
-              ,drug_catg_end_dt eff_end_dt
+              ,TO_DATE('01012100','ddmmyyyy') eff_end_dt
               ,drug_catg_eff_dt tim_per_bgn_dt
-              ,drug_catg_end_dt tim_per_end_dt
+              ,TO_DATE('01012100','ddmmyyyy') tim_per_end_dt
               ,ppaca_rtl_ind
           FROM bivv.ic_product_t);
 
