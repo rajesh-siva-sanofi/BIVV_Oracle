@@ -1,16 +1,18 @@
-CREATE OR REPLACE VIEW FE_SLS_EXCL_V AS
-SELECT 
+CREATE OR REPLACE VIEW HCRS.FE_SLS_EXCL_V AS
+SELECT
 /****************************************************************************
    * View Name : fe_sls_excl_v
    * Date Created : 4/18/2016
    * Author : Tom Zimmerman
-   * Description :  
+   * Description :
    * Called by datawindow  d_sales_exclusions  within u_tabpg_exclusions   which resides in the gpc_profile.pbl
    *
    *
    * MOD HISTORY
    *  Date        Modified by   Reason
    *  ----------  ------------  ------------------------------------------------
+   *  4/5/2020    M. Gedzior    RITM-1714054 - added sls_excl_cd to support
+   *                            subPHS transaction handling
    ****************************************************************************/
   e.prfl_id
   , e.over_ind
@@ -69,8 +71,10 @@ SELECT
   , v.trans_id AS v_trans_id
   , v.trans_adj_cd
   , v.trans_adj_descr
-  , v.co_id 
-FROM hcrs.prfl_sls_excl_t e, 
+  , v.co_id
+  , v.sls_excl_cd
+  , v.sls_excl_descr
+FROM hcrs.prfl_sls_excl_t e,
      hcrs.nom_excl_v v
 WHERE e.prfl_id = v.prfl_id
 AND e.trans_id = v.trans_id

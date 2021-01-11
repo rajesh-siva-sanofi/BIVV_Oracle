@@ -27,9 +27,9 @@ AS
    *                Clear lgcy_trans_no and assc_invc_no for ICW_KEY rows.
    *
    *                Gets the parent trans_id for SAP_ADJ, CARS_RBT_FEE,
-   *                X360_ADJ, and PRASCO_RBTFEE linkages.  These links are done
-   *                as scalar subqueries because there may be more than one
-   *                parent transaction, the volumne of SAP, SAP4H, X360, and
+   *                X360_ADJ, BIVV_ADJ, and PRASCO_RBTFEE linkages.  These links
+   *                are done as scalar subqueries because there may be more than
+   *                one parent transaction, the volumne of SAP, SAP4H, X360, and
    *                PRASCO links are low, and the index used contains all columns
    *                required to meet the join conditions and return the parent
    *                trans_id.
@@ -58,6 +58,9 @@ AS
    *                            Add SAP4H to SAP adjustment lookup
    *  08/28/2020  Joe Kidd      CHG-187461: Terms Percent Treatment for Direct Adjs
    *                            Remove parent terms percent
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
+   *                            Add Bioverative direct adjustment lookups
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -258,6 +261,45 @@ AS
                         AND rt0.paid_dt >= (z.earn_bgn_dt - z.prune_days)
                   )
           END parent_trans_id_x360_adj,
+          -- BIVV_ADJ: Link BIVVRXC Direct adjustment to parent BIVVRXC Direct invoice
+          CASE
+             WHEN z.rec_src_ind = z.rec_src_icw
+              AND z.trans_cls_cd = z.trans_cls_dir
+              AND z.source_sys_cde = z.system_bivvrxc
+              AND z.assc_invc_no IS NOT NULL
+              AND z.assc_invc_dt IS NOT NULL
+             THEN (  -- use MIN as there may be more than one line
+                     SELECT /*+ QB_NAME( p5_bivv )
+                                NO_MERGE
+                                INDEX( rt0 mstr_trans_ix503 )
+                                DYNAMIC_SAMPLING( 0 )
+                            */
+                            MIN( rt0.trans_id) trans_id
+                       FROM hcrs.mstr_trans_t rt0
+                         -- Same data source, not archived, no manual adjustments, limit snapshot
+                      WHERE rt0.rec_src_ind = z.rec_src_ind
+                        AND rt0.co_id = z.co_id
+                        AND rt0.archive_ind = z.archive_ind
+                        AND rt0.snpsht_id <= z.snpsht_id
+                         -- Customer ID must match to link to parent transaction, however
+                         -- Customer ID does not need to match to obtain Gross Dollars/Units/Packages
+                         --AND rt0.cust_id = z.cust_id
+                         -- Must be same NDC
+                        AND rt0.ndc_lbl = z.ndc_lbl
+                        AND rt0.ndc_prod = z.ndc_prod
+                        AND rt0.ndc_pckg = z.ndc_pckg
+                         -- Contract ID does not need to match link or obtain Gross Dollars/Units/Packages
+                         --AND rt0.contr_id = z.contr_id
+                         -- Must be a direct sale
+                        AND rt0.trans_cls_cd = z.trans_cls_cd
+                         -- Link to original invoice
+                        AND rt0.lgcy_trans_no = z.assc_invc_no
+                         -----------------------------------------------------
+                         -- Partition pruning - Direct partition access
+                         -----------------------------------------------------
+                        AND rt0.paid_dt = z.assc_invc_dt
+                  )
+          END parent_trans_id_bivv_adj,
           -- PRASCO_RBTFEE: Link Prasco rebate/fee to parent direct/indirect sale
           CASE
              WHEN z.rec_src_ind = z.rec_src_icw
@@ -394,6 +436,7 @@ AS
           z.system_sap4h,
           z.system_cars,
           z.system_x360,
+          z.system_bivvrxc,
           z.trans_cls_dir,
           z.trans_cls_idr,
           z.trans_cls_rbt,
@@ -404,6 +447,7 @@ AS
           z.trans_adj_icw_key,
           z.trans_adj_x360_adj,
           z.trans_adj_prasco_rbtfee,
+          z.trans_adj_bivv_adj,
           z.sap_adj_dt_mblty_hrd_lnk,
           z.sap_adj_dt_mblty_sft_lnk,
           z.cot_hhs_grantee,
@@ -427,7 +471,7 @@ AS
       AND z.ndc_lbl = rt.ndc_lbl (+)
       AND z.ndc_prod = rt.ndc_prod (+)
       AND z.ndc_pckg = rt.ndc_pckg (+)
-       -- Contract ID must match to link to parent transaction (see above)
+       -- Contract ID must match to link to parent transaction in some cases
        -- Contract ID does not need to match to obtain Gross Dollars/Units/Packages
       --AND z.contr_id = NVL( rt.contr_id (+), z.contr_id)
        -- Link to related sales/credit parent transaction

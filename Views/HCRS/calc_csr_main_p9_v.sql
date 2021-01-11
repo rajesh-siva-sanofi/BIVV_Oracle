@@ -19,11 +19,12 @@ AS
    *
    *                Set parent transaction linking columns.
    *
-   *                Gets the root data for SAP_ADJ, CARS_ADJ, and X360_ADJ
-   *                linkages.
+   *                Gets the root data for SAP_ADJ, CARS_ADJ, X360_ADJ, and
+   *                BIVV_ADJ linkages.
    *
-   *                SAP/SAP4H adj hard link: force use of parent invoice date.
-   *                SAP/SAP4H adj soft link: allow use of parent invoice date.
+   *                SAP/SAP4H/BIVVRXC adj hard link: force use of parent invoice
+   *                date.  SAP/SAP4H/BIVVRXC adj soft link: allow use of parent
+   *                invoice date.
    *
    *                Align Earned Dates with Root: All transactions use the
    *                assc_invc_dt/earn_bgn_dt of root, then parent, then current.
@@ -33,6 +34,9 @@ AS
    *
    *                Align WAC Price with Root: All transactions use the wac_price
    *                of root, then parent, then current.
+   *
+   *                Align Term Discount Percent with Root: All transactions use
+   *                the term_disc_pct of root, then parent, then current.
    *
    *                This view only returns data when the calculation environment
    *                has been initialized with pkg_common_procedures.p_init_calc.
@@ -52,6 +56,9 @@ AS
    *                            Add SAP4H to SAP Hard/Soft Linking
    *  08/28/2020  Joe Kidd      CHG-187461: Terms Percent Treatment for Direct Adjs
    *                            Remove root and parent terms percent
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
+   *                            Add Bioverative direct adjustment lookups
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -98,12 +105,14 @@ AS
           z.root_trans_id_sap_adj,
           z.root_trans_id_cars_adj,
           z.root_trans_id_x360_adj,
+          z.root_trans_id_bivv_adj,
           -- Parent Lookup IDs ---------------------------------------------------------------------
           z.parent_trans_id_sap_adj,
           z.parent_trans_id_icw_key,
           z.parent_trans_id_cars_rbt_fee,
           z.parent_trans_id_cars_adj,
           z.parent_trans_id_x360_adj,
+          z.parent_trans_id_bivv_adj,
           z.parent_trans_id_prasco_rbtfee,
           -- Link Markers --------------------------------------------------------------------------
           z.parent_link_ind,
@@ -118,17 +127,21 @@ AS
           z.parent_assc_invc_no,
           -- Transaction Dates ---------------------------------------------------------------------
           CASE
-             -- SAP/SAP4H adjustment hard linking (force paid date to original invoice)
-             WHEN z.source_sys_cde IN (z.system_sap,
-                                       z.system_sap4h)
+             -- SAP/SAP4H/BIVVRXC adjustment hard linking (force paid date to original invoice)
+             WHEN z.trans_cls_cd = z.trans_cls_dir
+              AND z.source_sys_cde IN (z.system_sap,
+                                       z.system_sap4h,
+                                       z.system_bivvrxc)
               AND z.parent_link_ind = z.sap_adj_dt_mblty_hrd_lnk
              THEN NVL( z.parent_paid_dt, z.paid_dt)
              ELSE z.paid_dt
           END paid_dt,
           CASE
-             -- SAP adjustment soft linking, allow use of parent invoice date
-             WHEN z.source_sys_cde IN (z.system_sap,
-                                       z.system_sap4h)
+             -- SAP/SAP4H/BIVVRXC adjustment soft linking, allow use of parent invoice date
+             WHEN z.trans_cls_cd = z.trans_cls_dir
+              AND z.source_sys_cde IN (z.system_sap,
+                                       z.system_sap4h,
+                                       z.system_bivvrxc)
               AND z.parent_link_ind = z.sap_adj_dt_mblty_sft_lnk
              THEN z.parent_paid_dt
           END alt_paid_dt,
@@ -205,6 +218,7 @@ AS
           z.system_sap4h,
           z.system_cars,
           z.system_x360,
+          z.system_bivvrxc,
           z.trans_cls_dir,
           z.trans_cls_idr,
           z.trans_cls_rbt,
@@ -215,6 +229,7 @@ AS
           z.trans_adj_icw_key,
           z.trans_adj_x360_adj,
           z.trans_adj_prasco_rbtfee,
+          z.trans_adj_bivv_adj,
           z.sap_adj_dt_mblty_hrd_lnk,
           z.sap_adj_dt_mblty_sft_lnk,
           z.cot_hhs_grantee,
@@ -229,4 +244,5 @@ AS
           hcrs.mstr_trans_t r
     WHERE COALESCE( z.root_trans_id_sap_adj,
                     z.root_trans_id_cars_adj,
-                    z.root_trans_id_x360_adj) = r.trans_id (+);
+                    z.root_trans_id_x360_adj,
+                    z.root_trans_id_bivv_adj) = r.trans_id (+);

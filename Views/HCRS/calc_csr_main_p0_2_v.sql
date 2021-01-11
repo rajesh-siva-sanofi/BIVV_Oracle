@@ -21,10 +21,10 @@ AS
    *                Get product transactions with the earn date after the
    *                calculation period date for calculations that use earn date.
    *
-   *                Include SAP/SAP4H adjustment transactions since their earned
-   *                date is based on original invoice date, so the earn range
-   *                end date must extended to the snapshot date to allow all
-   *                adjustments to be found.
+   *                Include SAP/SAP4H/BIVVRXC adjustment transactions since their
+   *                earned date is based on original invoice date, so the earn
+   *                range end date must extended to the snapshot date to allow
+   *                all adjustments to be found.
    *
    *                This view only returns data when the calculation environment
    *                has been initialized with pkg_common_procedures.p_init_calc.
@@ -43,6 +43,9 @@ AS
    *                            Add SAP4H source system code column
    *                            Add SAP4H to SAP adjustment lookup
    *                            Remove manual adj check
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
+   *                            Add BIVVRXC to the transactions
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -148,6 +151,7 @@ AS
           ppw.system_cars,
           ppw.system_x360,
           ppw.system_prasco,
+          ppw.system_bivvrxc,
           ppw.trans_cls_dir,
           ppw.trans_cls_idr,
           ppw.trans_cls_rbt,
@@ -158,6 +162,7 @@ AS
           ppw.trans_adj_icw_key,
           ppw.trans_adj_x360_adj,
           ppw.trans_adj_prasco_rbtfee,
+          ppw.trans_adj_bivv_adj,
           ppw.sap_adj_dt_mblty_hrd_lnk,
           ppw.sap_adj_dt_mblty_sft_lnk,
           ppw.whls_cot_grp_cd_noncbk,
@@ -187,10 +192,12 @@ AS
        -- prune_days + 1 is ADDED to max_earn_end_dt because query 0-1
        -- already pulls to max_earn_end_dt + prune_days, this prevents overlap
       AND z.earn_bgn_dt BETWEEN (ppw.max_earn_end_dt + ppw.prune_days + 1) AND (ppw.snpsht_dt + ppw.prune_days)
-       -- Only SAP/SAP4H adjustment transactions (no manyual adjustments)
+       -- Only SAP/SAP4H/BIVVRXC adjustment transactions (no manual adjustments)
+       -- BIVVRXC has indirects, but assc_invc_no will always be NULL for them
       AND z.rec_src_ind = ppw.rec_src_icw
       AND z.source_sys_cde IN (ppw.system_sap,
-                               ppw.system_sap4h)
+                               ppw.system_sap4h,
+                               ppw.system_bivvrxc)
       AND z.assc_invc_no IS NOT NULL
        --------------------------------------------------------------------
        -- PPW: Don't include NDCs that are for bundling only

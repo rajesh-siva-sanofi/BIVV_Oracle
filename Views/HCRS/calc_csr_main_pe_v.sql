@@ -32,6 +32,9 @@ AS
    *                            Group columns, GTT column reduction, Adjust hints
    *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
    *                            Add SAP4H source system code column
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems
+   *                            Add Bioverative direct adjustment lookups
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -79,12 +82,14 @@ AS
           z.root_trans_id_sap_adj,
           z.root_trans_id_cars_adj,
           z.root_trans_id_x360_adj,
+          z.root_trans_id_bivv_adj,
           -- Parent Lookup IDs ---------------------------------------------------------------------
           z.parent_trans_id_sap_adj,
           z.parent_trans_id_icw_key,
           z.parent_trans_id_cars_rbt_fee,
           z.parent_trans_id_cars_adj,
           z.parent_trans_id_x360_adj,
+          z.parent_trans_id_bivv_adj,
           z.parent_trans_id_prasco_rbtfee,
           -- Link Markers --------------------------------------------------------------------------
           z.root_link_ind,
@@ -155,6 +160,8 @@ AS
           z.system_sap4h,
           z.system_cars,
           z.system_x360,
+          z.system_bivvrxc,
+          z.trans_cls_dir,
           z.trans_cls_rbt
           -- Marking data --------------------------------------------------------------------------
           -- Cursor Row Count ----------------------------------------------------------------------

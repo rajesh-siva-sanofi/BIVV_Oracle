@@ -40,6 +40,11 @@ AS
    *                            Support SAP4H transactions, add term code, add
    *                            original invoice source system, and others for
    *                            support queries
+   *  08/01/2020  Pravin Hujare CHG-194469: SHIFT PHASE 2
+   *                            Add company code PR02 to the list of blocked company codes
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative RxC Direct Credits, CCG Rebates,
+   *                            and Biogen Medicaid
    ****************************************************************************/
           -- ICW Fields (needed for interface queries)
           iis.sales_num,
@@ -135,6 +140,7 @@ AS
                   'DIRECT', TO_NUMBER( iis.invce_num),
                   'INDIRECT', DECODE( iis.source_sys_cde,
                                       'CARS', iis.submitm_num,
+                                      'BIVVRXC', iis.submitm_num,
                                       'SNYCARS', iis.submitm_num,
                                       'SNYMANUAL', iis.submitm_num,
                                       'GNZ', iis.submitm_num,
@@ -143,6 +149,7 @@ AS
                   'DIRECT', iis.invce_line_num,
                   'INDIRECT', DECODE( iis.source_sys_cde,
                                       'CARS', iis.adj_num,
+                                      'BIVVRXC', iis.adj_num,
                                       'SNYCARS', iis.adj_num,
                                       'SNYMANUAL', iis.adj_num,
                                       'GNZ', iis.adj_num,
@@ -156,22 +163,24 @@ AS
                                       TO_NUMBER( NULL))) assc_invc_no,
           TO_NUMBER( NULL) assc_invc_line_no,
           CASE
-             -- SAP always uses SAP for original invoice (ICW does not populate)
+             -- SAP always uses SAP for original invoice
              WHEN iis.source_sys_cde = 'SAP'
               AND iis.orig_invce_num IS NOT NULL
              THEN iis.source_sys_cde
-             -- SAP4H will have SAP4H or SAP for original invoice
-             -- All other source systems do not populate
+             -- Original source system is only populated for SAP4H invoices
+             -- SAP4H will have SAP4H or SAP for original source system
              ELSE iis.orig_invce_src_sys_cde
           END assc_invc_source_sys_cde,
           iis.contr_id contr_id,
           TO_CHAR( iis.cpgrp_num) price_grp_id,
           TO_NUMBER( NULL) related_sales_id,
           TO_NUMBER( NULL) related_credits_id,
-          DECODE( iis.source_sys_cde,
-                  'SAP', iis.list_price,
-                  'SAP4H', iis.list_price,
-                  TO_NUMBER( NULL)) wac_price,
+          CASE
+             WHEN iis.sales_type_cde = 'DIRECT'
+              AND iis.source_sys_cde IN ('SAP', 'SAP4H', 'BIVVRXC')
+             THEN iis.list_price
+             ELSE TO_NUMBER( NULL)
+          END wac_price,
           iis.unit_price pkg_price,
           NVL( iis.pkg_units, 0) pkg_qty,
           TO_NUMBER( NULL) claim_unit_qty,
@@ -183,28 +192,31 @@ AS
                   'DIRECT', TO_NUMBER( NULL),
                   'INDIRECT', NVL( iis.chrgbk_claim_amt, 0)) whls_chrgbck_amt,
           TO_NUMBER( NULL) gross_sale_amt,
-          DECODE( iis.source_sys_cde,
-                  'SAP', iis.list_price * NVL( iis.pkg_units, 0),
-                  'SAP4H', iis.list_price * NVL( iis.pkg_units, 0),
-                  TO_NUMBER( NULL)) wac_extnd_amt,
+          CASE
+             WHEN iis.sales_type_cde = 'DIRECT'
+              AND iis.source_sys_cde IN ('SAP', 'SAP4H', 'BIVVRXC')
+             THEN iis.list_price * NVL( iis.pkg_units, 0)
+             ELSE TO_NUMBER( NULL)
+          END wac_extnd_amt,
           iis.terms term_cd,
           TO_NUMBER( NULL) actual_potency,
           '' line_ref_id,
           '' cmt_txt
      FROM hcrs.icw2_intrpd_sales_v iis
        -- Eliminate non-US companys (easier to delete extra data for new companies)
-    WHERE iis.co_cde NOT IN ('0002', -- Dermik Laboratories Inc Parsippany
-                             '0100', -- Aventis Pharma Products I Parsippany
-                             '0238', -- Dermik Labs Canada Inc Laval
-                             '0609', -- sanofi-aventis Canada Inc Laval
-                             '2084', -- sanofi-aventis Pharm Laval
-                             '2106', -- Aventis Pharma, Inc (PR) Lainate
-                             '9905') -- Rhodiapharm Inc Laval
-                             --'0901', -- sanofi-aventis U.S. Bridgewater
-                             --'2039', -- sanofi-aventis U.S. LLC Bridgewater
-                             --'2100', -- Merrell Pharma Inc. Reading
-                             --'2123', -- Blue Ridge Lavboratories Kansas City
-                             --'9338') -- Sanofi-Synthelabo Inc Bridgewater
+    WHERE iis.co_cde NOT IN ('------',
+                             --'0901', -- Sanofi US Services Inc.
+                             --'1209', -- Sanofi US Corporation
+                             --'2039', -- sanofi-aventis U.S. LLC
+                             --'2100', -- Merrell Pharma Inc.
+                             '2106',   -- Aventis Pharma, Inc (PR)
+                             --'2123', -- Blue Ridge Laboratories
+                             --'5100', -- Genzyme Corporation
+                             --'9338', -- Sanofi-Synthelabo Inc
+                             'PR02', -- Sanofi PR
+                             --'US03', -- Genzyme Corporation US
+                             --'US12', -- Bioverativ US
+                             '------')
        -- Only direct sales and chargebacks (others are linked in credits)
       AND iis.sales_type_cde IN ('DIRECT', 'INDIRECT')
        -- Block Genzyme manual data for SPM source/sales code

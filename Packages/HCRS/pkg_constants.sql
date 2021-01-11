@@ -178,6 +178,11 @@ AS
    *  11/6/2019   Mario Gedzior RITM1441194 - added mod_prcss for Medicare filing (FIA)
    *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
    *                            Add SAP4H source system constants
+   *  04/05/2020  M. Gedzior    RITM-1714054: Add SubPHS to Sales Exclusion
+   *              Joe Kidd      Add sales exclusion code constants
+   *                            Add sales exclusion compare code constants
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
    ****************************************************************************/
 
  -- Registered variables (these are registered, not constants)
@@ -835,7 +840,7 @@ AS
  -- Price Mod Process Codes
  cs_price_mod_prcss_cd_fil        CONSTANT hcrs.price_mod_prcss_t.price_mod_prcss_cd%TYPE := 'FIL'; -- Medicaid filing
  cs_price_mod_prcss_cd_fia        CONSTANT hcrs.price_mod_prcss_t.price_mod_prcss_cd%TYPE := 'FIA'; -- Medicare ASP filing
- 
+
  -- Pricing Type Constants
  cs_price_typ_cd_wac              CONSTANT hcrs.prod_price_typ_t.prod_price_typ_cd%TYPE := 'WAC'; -- WAC price type
  cs_price_typ_cd_awp              CONSTANT hcrs.prod_price_typ_t.prod_price_typ_cd%TYPE := 'AWP'; -- AWP price type
@@ -876,6 +881,9 @@ AS
  cs_system_xenon                  CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'XENON'; -- Xenon data original format
  cs_system_x360                   CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'X360'; -- Xenon data corrected format
  cs_system_prasco                 CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'PRASCO';
+ cs_system_bivvrxc                CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'BIVVRXC'; -- Bioverativ - Direct/Indirect from RxCrossroads
+ cs_system_bivvccg                CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'BIVVCCG'; -- Bioverativ - Rebates/Fees from Integrichain (Cumberland Consulting Group) FLEX
+ cs_system_bibbmed                CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'BIBBMED'; -- Bioverativ - Biogen Medicaid from Integrichain (Cumberland Consulting Group) FLEX
  cs_system_gnzics                 CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'GNZICS'; -- Genzyme ICS
  cs_system_gnzups                 CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'GNZUPS'; -- Genzyme UPS
  cs_system_gnzabs                 CONSTANT hcrs.mstr_trans_t.source_sys_cde%TYPE := 'GNZABS'; -- Genzyme ABS
@@ -898,6 +906,8 @@ AS
  cs_trans_adj_prasco_rollup       CONSTANT hcrs.trans_adj_t.trans_adj_cd%TYPE := 'PRASCO_ROLLUP'; -- Prasco Line item rollup
  cs_trans_adj_prasco_rbtfee       CONSTANT hcrs.trans_adj_t.trans_adj_cd%TYPE := 'PRASCO_RBTFEE'; -- Prasco Rebate/Fee Link
  cs_trans_adj_rollup              CONSTANT hcrs.trans_adj_t.trans_adj_cd%TYPE := 'ROLLUP';        -- Other Line item rollup
+ cs_trans_adj_bivv_rollup         CONSTANT hcrs.trans_adj_t.trans_adj_cd%TYPE := 'BIVV_ROLLUP';   -- Bioverativ Line item rollup
+ cs_trans_adj_bivv_adj            CONSTANT hcrs.trans_adj_t.trans_adj_cd%TYPE := 'BIVV_ADJ';      -- Bioverativ adjustment
  cs_trans_adj_estimate            CONSTANT hcrs.trans_adj_t.trans_adj_cd%TYPE := 'ESTIMATE';      -- Line item created by Split Percentage Estimates
  cs_trans_adj_bndl_adj            CONSTANT hcrs.trans_adj_t.trans_adj_cd%TYPE := 'BNDL_ADJ';      -- Line item created by Bundling Adjustments
 
@@ -959,6 +969,18 @@ AS
 
  -- System flags
  cs_skip_validate_matrix          CONSTANT hcrs.sys_param_t.param_val%TYPE := 'SKIP VALIDATE MATRIX'; -- Used to control validate matrix step in pkg_common_procedures.p_common_initialize
+
+ -- Sales exclusion codes
+ cs_sls_excl_cd_nom              CONSTANT hcrs.cd_t.cd%TYPE := 'NOM'; -- Nominal sales
+ cs_sls_excl_cd_hhs              CONSTANT hcrs.cd_t.cd%TYPE := 'HHS'; -- Sub-PHS sales
+
+ -- Sales exclusion compare codes
+ cs_sls_excl_comp_cd_lss         CONSTANT VARCHAR2( 10) := 'LSS'; -- Less than
+ cs_sls_excl_comp_cd_leq         CONSTANT VARCHAR2( 10) := 'LEQ'; -- Less than or equal
+ cs_sls_excl_comp_cd_equ         CONSTANT VARCHAR2( 10) := 'EQU'; -- Equal
+ cs_sls_excl_comp_cd_neq         CONSTANT VARCHAR2( 10) := 'NEQ'; -- Not Equal
+ cs_sls_excl_comp_cd_gtr         CONSTANT VARCHAR2( 10) := 'GTR'; -- Greater than
+ cs_sls_excl_comp_cd_geq         CONSTANT VARCHAR2( 10) := 'GEQ'; -- Greater than or equal
 
 END pkg_constants;
 /

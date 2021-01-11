@@ -152,13 +152,13 @@ AS
    * Query Map
    *----------------------------------------------------------------------------
    *
-   *  P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9 --> PA
-   *                                            |                           |
-   *                                            v                           v
-   *  +<----------------------------------------+<--------------------------+
+   *  P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9 --> PA --> PB
+   *                                                   |                           |
+   *                                                   v                           v
+   *  +<-----------------------------------------------+<--------------------------+
    *  |
    *  v
-   *  PB --> PC --> PC --> PE --> PF --> PG ------> PH
+   *  PC --> PD --> PE --> PF --> PG --> PH ------> PI
    *                                     |          |
    *                                     v          v
    *                                   SELECT (UNION ALL)
@@ -172,22 +172,23 @@ AS
    * P0 - Trans: Get the customer and the bundle sequence number
    * P1 - Trans: Add the customer class of trade and the bundle products
    * P2 - Trans: Get transactions, filter for bundled components with the matrix
-   * P3 - Trans: Get ICW_KEY related SAP/SAP4H sales and RMUS/CARS chargebacks
-   * P4 - Trans: Get parent RMUS/CARS chargeback for rebates and root SAP/SAP4H sales
-   * P5 - Trans: Get values from parent RMUS/CARS chargeback and root SAP/SAP4H sales
-   * P6 - Trans: Calculate the gross and discount dollars, filter by true earn date
-   * P7 - Bundles: Get all price group bundle dates actually in use by transactions
-   * P8 - Bundles: Get the bundle dates in use, filter out inactive conditions
-   * P9 - Bundles: Find condition overrides
-   * PA - Bundles: Add the bundle sequence number, remove unneeded conditions
-   * PB - Trans: Get transactions for each linked bundle date range
-   * PC - Trans: Check for main calc NDCs
-   * PD - Trans: Limit to relationships with main calc NDCs, get trans links
-   * PE - Trans: Remove duplicate/unneeded gross dollar amounts
-   * PF - Trans: Remove pricing periods with no gross dollars
-   * PG - Transaction Detail: Transform to table fields with gross/discount dollars
+   * P3 - Trans: Get count of transactions on bundled price groups
+   * P4 - Trans: Get ICW_KEY related SAP/SAP4H sales and RMUS/CARS chargebacks
+   * P5 - Trans: Get parent RMUS/CARS chargeback for rebates and root SAP/SAP4H sales
+   * P6 - Trans: Get values from parent RMUS/CARS chargeback and root SAP/SAP4H sales
+   * P7 - Trans: Calculate the gross and discount dollars, filter by true earn date
+   * P8 - Bundles: Get all price group bundle dates actually in use by transactions
+   * P9 - Bundles: Get the bundle dates in use, filter out inactive conditions
+   * PA - Bundles: Find condition overrides
+   * PB - Bundles: Add the bundle sequence number, remove unneeded conditions
+   * PC - Trans: Get transactions for each linked bundle date range
+   * PD - Trans: Check for main calc NDCs
+   * PE - Trans: Limit to relationships with main calc NDCs, get trans links
+   * PF - Trans: Remove duplicate/unneeded gross dollar amounts
+   * PG - Trans: Remove pricing periods with no gross dollars
+   * PH - Transaction Detail: Transform to table fields with gross/discount dollars
    *      split into pricing and performance fields
-   * PH - Transaction Summary: Get sum of transaction detail
+   * PI - Transaction Summary: Get sum of transaction detail
    * SELECT - Output the Summary and Detail for use by multi-table INSERT
    *
    *----------------------------------------------------------------------------
@@ -212,6 +213,8 @@ AS
    *                            Add SAP4H source system code column
    *                            Add SAP4H to SAP transaction filter
    *                            Add SAP4H to SAP adjustment lookups
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Short circuit if no trans are on bundled price groups
    ****************************************************************************/
      AS (-- P0 - Trans: Get the customer and the bundle sequence number
          SELECT /*+ QB_NAME( p0 )
@@ -364,6 +367,36 @@ AS
                 mt.total_amt,
                 mt.whls_chrgbck_amt,
                 mt.gross_sale_amt,
+                CASE
+                   WHEN mt.contr_id IS NOT NULL
+                    AND mt.price_grp_id IS NOT NULL
+                    AND EXISTS
+                        (-- Check if transaction on bundle contract price group
+                           SELECT /*+ QB_NAME( p2a )
+                                      NO_MERGE
+                                      INDEX( ppbdw prfl_prod_bndl_dts_wrk_ix1 )
+                                      DYNAMIC_SAMPLING( 0 )
+                                  */
+                                  NULL
+                             FROM hcrs.prfl_prod_bndl_dts_wrk_t ppbdw
+                               --------------------------------------------------------------------
+                               -- Z-PPBDW: All Transactions to Profile Product Bundle Dates
+                               -- 4.4. The transaction's contract and price group must be
+                               --      assigned to the bundle code.
+                               -- 4.5. The transaction's Earned Date must fall within the
+                               --      effective range of the contract price group bundle.
+                               -- 4.6. The transaction's Earned Date must fall within the
+                               --      bundle condition effective period.
+                               -- 4.7. The transaction's Earned Date must fall within the
+                               --      pricing period of the contract price group bundle.
+                            WHERE ppbdw.bndl_cd = z.bndl_cd
+                              AND ppbdw.contr_id = mt.contr_id
+                              AND ppbdw.price_grp_no = mt.price_grp_id
+                              AND ppbdw.cond_cd = z.cond_cd
+                        )
+                   THEN 1
+                   ELSE 0
+                END bndl_price_grp,
                 z.prune_days,
                 z.calc_running,
                 z.flag_yes,
@@ -419,8 +452,77 @@ AS
             AND mt.trans_typ_cd = pmw.trans_typ_cd
         ),
         p3
-     AS (-- P3 - Trans: Get ICW_KEY related SAP/SAP4H sales and RMUS/CARS chargebacks
-         SELECT /*+ QB_NAME( p2 )
+     AS (-- P3 - Trans: Get count of transactions on bundled price groups
+         SELECT /*+ QB_NAME( p3 )
+                    NO_MERGE
+                    DYNAMIC_SAMPLING( 0 )
+                */
+                z.prfl_id,
+                z.co_id,
+                z.ndc_lbl,
+                z.ndc_prod,
+                z.ndc_pckg,
+                z.calc_typ_cd,
+                z.cust_id,
+                z.cust_strt_dt,
+                z.cust_end_dt,
+                z.cot_begn_dt,
+                z.cot_end_dt,
+                z.trans_cls_cd,
+                z.bndl_cd,
+                z.bndl_strt_dt,
+                z.bndl_end_dt,
+                z.cond_cd,
+                z.cond_strt_dt,
+                z.cond_end_dt,
+                z.bndl_seq_no,
+                z.min_paid_start_dt,
+                z.max_paid_end_dt,
+                z.min_earn_start_dt,
+                z.max_earn_end_dt,
+                z.paid_dt,
+                z.earn_bgn_dt,
+                z.earn_end_dt,
+                z.assc_invc_dt,
+                z.bndl_ndc_lbl,
+                z.bndl_ndc_prod,
+                z.bndl_ndc_pckg,
+                z.rec_src_ind,
+                z.archive_ind,
+                z.snpsht_id,
+                z.source_sys_cde,
+                z.tt_begn_dt,
+                z.tt_end_dt,
+                z.lgcy_trans_no,
+                z.assc_invc_no,
+                z.lgcy_trans_line_no,
+                z.related_sales_id,
+                z.contr_id,
+                z.price_grp_no,
+                z.trans_id,
+                z.wac_price,
+                z.pkg_qty,
+                z.total_amt,
+                z.whls_chrgbck_amt,
+                z.gross_sale_amt,
+                MAX( z.bndl_price_grp) OVER () bndl_price_grp,
+                z.prune_days,
+                z.calc_running,
+                z.flag_yes,
+                z.src_tbl_iis,
+                z.trans_cls_dir,
+                z.trans_cls_idr,
+                z.trans_cls_rbt,
+                z.trans_adj_original,
+                z.trans_adj_cars_rollup,
+                z.system_sap,
+                z.system_sap4h,
+                z.system_cars
+           FROM p2 z
+        ),
+        p4
+     AS (-- P4 - Trans: Get ICW_KEY related SAP/SAP4H sales and RMUS/CARS chargebacks
+         SELECT /*+ QB_NAME( p4 )
                     NO_MERGE
                     LEADING( z rt )
                     USE_NL( z rt )
@@ -502,7 +604,7 @@ AS
                 z.system_sap,
                 z.system_sap4h,
                 z.system_cars
-           FROM p2 z,
+           FROM p3 z,
                 hcrs.mstr_trans_t rt
             --------------------------------------------------------------------
             -- Z-RT: Limit transactions to non-archived non-manual transactions
@@ -539,10 +641,12 @@ AS
             AND (z.paid_dt + z.prune_days) >= rt.paid_dt (+)
              -- Related sale/credit will be paid on or after linked credit was earned
             AND (z.earn_bgn_dt - z.prune_days) <= rt.paid_dt (+)
+             -- Only continue if there are transactions on bundled price groups
+            AND z.bndl_price_grp > 0
         ),
-        p4
-     AS (-- P4 - Trans: Get parent RMUS/CARS chargeback for rebates and root SAP/SAP4H sales
-         SELECT /*+ QB_NAME( p4 )
+        p5
+     AS (-- P5 - Trans: Get parent RMUS/CARS chargeback for rebates and root SAP/SAP4H sales
+         SELECT /*+ QB_NAME( p5 )
                     NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
@@ -595,7 +699,7 @@ AS
                    THEN (  -- START WITH clause uses index pk_mstr_trans_t
                            -- CONNECT BY clauses uses index mstr_trans_ix503
                            -- use MIN as there may be more than one line
-                           SELECT /*+ QB_NAME( p4_sap )
+                           SELECT /*+ QB_NAME( p5_sap )
                                       NO_MERGE
                                       INDEX( rt pk_mstr_trans_t )
                                       INDEX( rt mstr_trans_ix503 )
@@ -646,7 +750,7 @@ AS
                     AND z.lgcy_trans_no IS NOT NULL
                     AND z.rt_trans_id = z.trans_id
                    THEN (  -- Use MIN as there may be more than one line
-                           SELECT /*+ QB_NAME( p4_cars )
+                           SELECT /*+ QB_NAME( p5_cars )
                                       NO_MERGE
                                       INDEX( rt mstr_trans_ix503 )
                                       DYNAMIC_SAMPLING( 0 )
@@ -701,11 +805,11 @@ AS
                 z.system_sap,
                 z.system_sap4h,
                 z.system_cars
-           FROM p3 z
+           FROM p4 z
         ),
-        p5
-     AS (-- Trans: Get values from parent RMUS/CARS chargeback and root SAP/SAP4H sales
-         SELECT /*+ QB_NAME( p5 )
+        p6
+     AS (-- P6 - Trans: Get values from parent RMUS/CARS chargeback and root SAP/SAP4H sales
+         SELECT /*+ QB_NAME( p6 )
                     NO_MERGE
                     LEADING( z rt )
                     USE_NL( z rt )
@@ -782,14 +886,14 @@ AS
                 z.system_sap,
                 z.system_sap4h,
                 z.system_cars
-           FROM p4 z,
+           FROM p5 z,
                 hcrs.mstr_trans_t rt
           WHERE COALESCE( z.cars_trans_id,
                           z.sap_trans_id) = rt.trans_id (+)
         ),
-        p6
-     AS (-- P6 - Trans: Calculate the gross and discount dollars, filter by true earn date
-         SELECT /*+ QB_NAME( p6 )
+        p7
+     AS (-- P7 - Trans: Calculate the gross and discount dollars, filter by true earn date
+         SELECT /*+ QB_NAME( p7 )
                     NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
@@ -826,7 +930,7 @@ AS
                     AND z.price_grp_no IS NOT NULL
                     AND EXISTS
                         (-- Check if transaction on bundle contract price group
-                           SELECT /*+ QB_NAME( p6a )
+                           SELECT /*+ QB_NAME( p7a )
                                       NO_MERGE
                                       INDEX( ppbdw prfl_prod_bndl_dts_wrk_ix1 )
                                       DYNAMIC_SAMPLING( 0 )
@@ -908,16 +1012,17 @@ AS
                 z.trans_cls_rbt,
                 z.trans_adj_original,
                 z.trans_adj_cars_rollup
-           FROM p5 z
+           FROM p6 z
           WHERE z.earn_dt BETWEEN z.cust_strt_dt AND z.cust_end_dt
             AND z.earn_dt BETWEEN z.bndl_strt_dt AND z.bndl_end_dt
             AND z.earn_dt BETWEEN z.cond_strt_dt AND z.cond_end_dt
             AND z.earn_dt BETWEEN z.cot_begn_dt AND z.cot_end_dt
             AND z.earn_dt BETWEEN z.tt_begn_dt AND z.tt_end_dt
         ),
-        p7
-     AS (-- P7 - Bundles: Get all price group bundle dates actually in use by transactions
-         SELECT /*+ NO_MERGE
+        p8
+     AS (-- P8 - Bundles: Get all price group bundle dates actually in use by transactions
+         SELECT /*+ QB_NAME( p8 )
+                    NO_MERGE
                     LEADING( z ppbdw )
                     USE_HASH( z ppbdw )
                     FULL( ppbdw )
@@ -934,7 +1039,7 @@ AS
                 ppbdw.perf_strt_dt,
                 ppbdw.perf_end_dt,
                 z.bndl_seq_no
-           FROM p6 z,
+           FROM p7 z,
                 hcrs.prfl_prod_bndl_dts_wrk_t ppbdw
             --------------------------------------------------------------------
             -- Z-PPBDW: All Transactions to Profile Product Bundle Dates
@@ -958,9 +1063,10 @@ AS
             AND z.earn_dt BETWEEN ppbdw.bndl_strt_dt AND ppbdw.bndl_end_dt
             AND z.earn_dt BETWEEN ppbdw.prcg_strt_dt AND ppbdw.prcg_end_dt
         ),
-        p8
-     AS (-- P8 - Bundles: Get the bundle dates in use, filter out inactive conditions
-         SELECT /*+ NO_MERGE
+        p9
+     AS (-- P9 - Bundles: Get the bundle dates in use, filter out inactive conditions
+         SELECT /*+ QB_NAME( p9 )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 DISTINCT
@@ -975,15 +1081,16 @@ AS
                 z.perf_strt_dt,
                 z.perf_end_dt,
                 z.bndl_seq_no
-           FROM p7 z
+           FROM p8 z
              -- filter non-NONE conditions where the condition was not active
              -- NONE conditions always effective beginning of time to end of time
           WHERE z.prcg_strt_dt BETWEEN z.cond_strt_dt AND z.cond_end_dt
             AND z.prcg_end_dt BETWEEN z.cond_strt_dt AND z.cond_end_dt
         ),
-        p9
-     AS (-- P9 - Bundles: Find condition overrides
-         SELECT /*+ NO_MERGE
+        pa
+     AS (-- PA - Bundles: Find condition overrides
+         SELECT /*+ QB_NAME( pa )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 z.trans_cls_cd,
@@ -1004,11 +1111,12 @@ AS
                 z.perf_strt_dt,
                 z.perf_end_dt,
                 z.bndl_seq_no
-           FROM p8 z
+           FROM p9 z
         ),
-        pa
-     AS (-- PA - Bundles: Add the bundle sequence number, remove unneeded conditions
-         SELECT /*+ NO_MERGE
+        pb
+     AS (-- PB - Bundles: Add the bundle sequence number, remove unneeded conditions
+         SELECT /*+ QB_NAME( pb )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 z.trans_cls_cd,
@@ -1028,12 +1136,13 @@ AS
                                      z.prcg_end_dt,
                                      z.perf_strt_dt,
                                      z.perf_end_dt) bndl_seq_no
-           FROM p9 z
+           FROM pa z
           WHERE z.cond_cd = z.first_cond_cd
         ),
-        pb
-     AS (-- PB - Trans: Get transactions for each linked bundle date range
-         SELECT /*+ NO_MERGE
+        pc
+     AS (-- PC - Trans: Get transactions for each linked bundle date range
+         SELECT /*+ QB_NAME( pc )
+                    NO_MERGE
                     LEADING( z y )
                     USE_HASH( z y )
                     DYNAMIC_SAMPLING( 0 )
@@ -1109,16 +1218,17 @@ AS
                 z.trans_cls_rbt,
                 z.trans_adj_original,
                 z.trans_adj_cars_rollup
-           FROM p6 z,
-                pa y
+           FROM p7 z,
+                pb y
           WHERE z.trans_cls_cd = y.trans_cls_cd
             AND z.bndl_cd = y.bndl_cd
             AND (   z.earn_dt BETWEEN y.prcg_strt_dt AND y.prcg_end_dt
                  OR z.earn_dt BETWEEN y.perf_strt_dt AND y.perf_end_dt)
         ),
-        pc
-     AS (-- PC - Trans: Check for main calc NDCs
-         SELECT /*+ NO_MERGE
+        pd
+     AS (-- PD - Trans: Check for main calc NDCs
+         SELECT /*+ QB_NAME( pd )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 z.prfl_id,
@@ -1164,12 +1274,13 @@ AS
                 z.trans_cls_rbt,
                 z.trans_adj_original,
                 z.trans_adj_cars_rollup
-           FROM pb z
+           FROM pc z
           WHERE z.prcg_perf_ind > 0 -- only include transactions in pricing or perf period
         ),
-        pd
-     AS (-- PD - Trans: Limit to relationships with main calc NDCs, get trans links
-         SELECT /*+ NO_MERGE
+        pe
+     AS (-- PE - Trans: Limit to relationships with main calc NDCs, get trans links
+         SELECT /*+ QB_NAME( pe )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 z.prfl_id,
@@ -1233,12 +1344,13 @@ AS
                 z.trans_cls_rbt,
                 z.trans_adj_original,
                 z.trans_adj_cars_rollup
-           FROM pc z
+           FROM pd z
           WHERE z.ndc_cnt > 0 -- only when calc ndcs found
         ),
-        pe
-     AS (-- PE - Trans: Remove duplicate/unneeded gross dollar amounts
-         SELECT /*+ NO_MERGE
+        pf
+     AS (-- PF - Trans: Remove duplicate/unneeded gross dollar amounts
+         SELECT /*+ QB_NAME( pf )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 z.prfl_id,
@@ -1295,11 +1407,12 @@ AS
                 z.dllrs_dsc,
                 z.calc_running,
                 z.flag_yes
-           FROM pd z
+           FROM pe z
         ),
-        pf
-     AS (-- PF - Trans: Remove pricing periods with no gross dollars
-         SELECT /*+ NO_MERGE
+        pg
+     AS (-- PG - Trans: Remove pricing periods with no gross dollars
+         SELECT /*+ QB_NAME( pg )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 z.prfl_id,
@@ -1331,11 +1444,12 @@ AS
                 z.dllrs_dsc,
                 z.calc_running,
                 z.flag_yes
-           FROM pe z
+           FROM pf z
         ),
-        pg
-     AS (-- PG - Transaction Detail: Transform to table fields with gross/discount dollars split into pricing and performance fields
-         SELECT /*+ NO_MERGE
+        ph
+     AS (-- PH - Transaction Detail: Transform to table fields with gross/discount dollars split into pricing and performance fields
+         SELECT /*+ QB_NAME( ph )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 z.prfl_id,
@@ -1368,12 +1482,13 @@ AS
                 z.dllrs_dsc,
                 z.calc_running,
                 z.flag_yes
-           FROM pf z
+           FROM pg z
           WHERE z.prcg_dllrs_grs <> 0 -- only when pricing gross dollars is not zero
         ),
-        ph
-     AS (-- PH - Transaction Summary: Get sum of transaction detail
-         SELECT /*+ NO_MERGE
+        pi
+     AS (-- PI - Transaction Summary: Get sum of transaction detail
+         SELECT /*+ QB_NAME( pi )
+                    NO_MERGE
                     DYNAMIC_SAMPLING( 0 )
                 */
                 z.prfl_id,
@@ -1399,7 +1514,7 @@ AS
                 SUM( z.perf_dllrs_dsc) perf_dllrs_dsc,
                 z.calc_running,
                 z.flag_yes
-           FROM pg z
+           FROM ph z
           GROUP BY z.prfl_id,
                    z.co_id,
                    z.ndc_lbl,
@@ -1420,7 +1535,8 @@ AS
         )
    -- SELECT - Output the Summary and Detail for use by multi-table INSERT
    -- Get union of summary and detail with percentages and totals in insert table order
-   SELECT /*+ NO_MERGE
+   SELECT /*+ QB_NAME( final_smry )
+              NO_MERGE
               DYNAMIC_SAMPLING( 0 )
           */
           1 tbl,
@@ -1457,10 +1573,11 @@ AS
           TO_NUMBER( NULL) dllrs_dsc,
           z.calc_running,
           z.flag_yes
-     FROM ph z
+     FROM pi z
    UNION ALL
    -- Detail table
-   SELECT /*+ NO_MERGE
+   SELECT /*+ QB_NAME( final_dtl )
+              NO_MERGE
               DYNAMIC_SAMPLING( 0 )
           */
           2 tbl,
@@ -1497,4 +1614,4 @@ AS
           z.dllrs_dsc,
           z.calc_running,
           z.flag_yes
-     FROM pg z;
+     FROM ph z;

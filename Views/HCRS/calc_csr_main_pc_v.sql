@@ -14,13 +14,12 @@ AS
    *
    *                DLLRS/UNITS 2
    *
-   *                Set parent transaction linking columns.  Order parent 
-   *                SAP/SAP4H original invoices before parent SAP/SAP4H
-   *                adjustment invoices.
+   *                Parent level: SAP/SAP4H/BIVVRXC original invoices ordered
+   *                before SAP/SAP4H/BIVVRXC adjustment invoices.
    *
-   *                Order RMUS/CARS ICW_KEY rebates/fees before other RMUS/CARS
-   *                rebates/fees.  Order SAP/SAP4H original invoices before
-   *                SAP/SAP4H adjustment invoices.
+   *                Child level: ICW_KEY rebates/fees ordered before other
+   *                rebates/fees. SAP/SAP4H/BIVVRXC original invoices ordered
+   *                before SAP/SAP4H/BIVVRXC adjustment invoices.
    *
    *                Calculate Gross Dollars, Net Dollars, Discount Dollars,
    *                Prompt Payment Dollars, Packages, and Units
@@ -42,6 +41,9 @@ AS
    *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
    *                            Add SAP4H source system code column
    *                            Add SAP4H to SAP Original/Adjustment ordering
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems
+   *                            Add Bioverative direct adjustment lookups
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -69,10 +71,12 @@ AS
           z.parent_trans_cls_cd,
           z.parent_source_sys_cde,
           CASE
-             -- SAP/SAP4H must order original first manually because dates
-             -- and numbers have no sane order
-             WHEN z.parent_source_sys_cde IN (z.system_sap,
-                                              z.system_sap4h)
+             -- SAP/SAP4H/BIVVRXC directs must order original first manually
+             -- because dates and numbers have no sane order
+             WHEN z.parent_trans_cls_cd = z.trans_cls_dir
+              AND z.parent_source_sys_cde IN (z.system_sap,
+                                              z.system_sap4h,
+                                              z.system_bivvrxc)
               AND z.parent_assc_invc_no IS NULL
              THEN 1
              ELSE 2
@@ -84,14 +88,16 @@ AS
           z.trans_cls_cd,
           z.source_sys_cde,
           CASE
-             -- RMUS/CARS must order related sales/credits rebates before other rebates
-             WHEN z.source_sys_cde = z.system_cars
+             -- ICW_KEY related sales/credits rebates before other rebates
+             WHEN z.trans_cls_cd = z.trans_cls_rbt
               AND z.parent_trans_id_icw_key IS NOT NULL
              THEN 1
-             -- SAP/SAP4H must order original first manually because dates
+             -- SAP/SAP4H/BIVVRXC directs must order original first manually because dates
              -- and numbers have no sane order
-             WHEN z.source_sys_cde IN (z.system_sap,
-                                       z.system_sap4h)
+             WHEN z.trans_cls_cd = z.trans_cls_dir
+              AND z.source_sys_cde IN (z.system_sap,
+                                       z.system_sap4h,
+                                       z.system_bivvrxc)
               AND z.assc_invc_no IS NULL
              THEN 1
              ELSE 2
@@ -109,12 +115,14 @@ AS
           z.root_trans_id_sap_adj,
           z.root_trans_id_cars_adj,
           z.root_trans_id_x360_adj,
+          z.root_trans_id_bivv_adj,
           -- Parent Lookup IDs ---------------------------------------------------------------------
           z.parent_trans_id_sap_adj,
           z.parent_trans_id_icw_key,
           z.parent_trans_id_cars_rbt_fee,
           z.parent_trans_id_cars_adj,
           z.parent_trans_id_x360_adj,
+          z.parent_trans_id_bivv_adj,
           z.parent_trans_id_prasco_rbtfee,
           -- Link Markers --------------------------------------------------------------------------
           z.root_link_ind,
@@ -194,6 +202,7 @@ AS
           z.system_sap4h,
           z.system_cars,
           z.system_x360,
+          z.system_bivvrxc,
           z.trans_cls_dir,
           z.trans_cls_idr,
           z.trans_cls_rbt,

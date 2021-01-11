@@ -20,14 +20,16 @@ AS
    *                Get product transactions with the earn date after the
    *                calculation period date for calculations that use earn date.
    *
-   *                Include CARS ICW_KEY related SALES transactions linked to
-   *                SAP adjustment transactions. This must be done because
-   *                RMUS/CARS assigns rebate claims dates based on the invoice
-   *                date, not the original invoice dates.  Since the earned date
-   *                of both the SAP adjustments and the ICW_KEY related
-   *                transactions is based on original invoice date, the earn
-   *                range end date must extended to the snapshot date to allow
-   *                all adjustments to be found.
+   *                Include CARS/BIVVCCG ICW_KEY credit transactions related to
+   *                SAP/SAP4H/BIVVRXC adjustment SALES transactions. This must
+   *                be done because RMUS/CARS/BIVVCCG assigns rebate claim dates
+   *                based on the invoice date, not the original invoice dates.
+   *                Since the earned date of both the SAP/SAP4H/BIVVRXC adjustments
+   *                and the ICW_KEY related transactions is based on original
+   *                invoice date, the earn range end date must extended to the
+   *                snapshot date to allow all adjustments to be found.
+   *                This view only returns data when the calculation environment
+   *                has been initialized with pkg_common_procedures.p_init_calc.
    *
    *                This view only returns data when the calculation environment
    *                has been initialized with pkg_common_procedures.p_init_calc.
@@ -39,6 +41,8 @@ AS
    *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
    *                            Add Assoc invoice source system code column
    *                            Add SAP4H source system code column
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -141,6 +145,7 @@ AS
           ppw.system_cars,
           ppw.system_x360,
           ppw.system_prasco,
+          ppw.system_bivvrxc,
           ppw.trans_cls_dir,
           ppw.trans_cls_idr,
           ppw.trans_cls_rbt,
@@ -151,6 +156,7 @@ AS
           ppw.trans_adj_icw_key,
           ppw.trans_adj_x360_adj,
           ppw.trans_adj_prasco_rbtfee,
+          ppw.trans_adj_bivv_adj,
           ppw.sap_adj_dt_mblty_hrd_lnk,
           ppw.sap_adj_dt_mblty_sft_lnk,
           ppw.whls_cot_grp_cd_noncbk,

@@ -40,6 +40,9 @@ AS
    *  08/28/2020  Joe Kidd      CHG-187461: Terms Percent Treatment for Direct Adjs
    *                            Remove root terms percent
    *                            Only use actual terms percent, not from root
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
+   *                            Add Bioverative direct adjustment lookups
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -84,12 +87,14 @@ AS
           z.root_trans_id_sap_adj,
           z.root_trans_id_cars_adj,
           z.root_trans_id_x360_adj,
+          z.root_trans_id_bivv_adj,
           -- Parent Lookup IDs ---------------------------------------------------------------------
           z.parent_trans_id_sap_adj,
           z.parent_trans_id_icw_key,
           z.parent_trans_id_cars_rbt_fee,
           z.parent_trans_id_cars_adj,
           z.parent_trans_id_x360_adj,
+          z.parent_trans_id_bivv_adj,
           z.parent_trans_id_prasco_rbtfee,
           -- Link Markers --------------------------------------------------------------------------
           CASE -- Ordered by frequency of occurance in data
@@ -134,6 +139,18 @@ AS
               AND z.root_cust_id = z.parent_cust_id
              THEN z.flag_yes
              WHEN z.root_trans_id_x360_adj IS NOT NULL
+             THEN z.flag_no
+             ---------------------------------------------------------------------------------------
+             -- BIVV_ADJ Linking: The customer IDs must match, but the contact IDs do not need to
+             -- match.  SAP link settings are used as they are really direct adjustment settings.
+             -- Linking must be on, but use date mobility:
+             -- N = No link, orig+adjs always included separately by their invoice dates
+             -- S = Soft Link, orig+adjs linked if their invoices dates are in the same component
+             -- Y = Hard Link, orig+adjs always linked and included on original invoice date
+             WHEN z.root_trans_id_bivv_adj IS NOT NULL
+              AND z.root_cust_id = z.parent_cust_id
+             THEN z.sap_adj_dt_mblty
+             WHEN z.root_trans_id_sap_adj IS NOT NULL
              THEN z.flag_no
           END root_link_ind,
           z.parent_link_ind,
@@ -214,6 +231,7 @@ AS
           z.system_sap4h,
           z.system_cars,
           z.system_x360,
+          z.system_bivvrxc,
           z.trans_cls_dir,
           z.trans_cls_idr,
           z.trans_cls_rbt,
@@ -224,6 +242,7 @@ AS
           z.trans_adj_icw_key,
           z.trans_adj_x360_adj,
           z.trans_adj_prasco_rbtfee,
+          z.trans_adj_bivv_adj,
           z.sap_adj_dt_mblty_hrd_lnk,
           z.sap_adj_dt_mblty_sft_lnk,
           z.cot_hhs_grantee,

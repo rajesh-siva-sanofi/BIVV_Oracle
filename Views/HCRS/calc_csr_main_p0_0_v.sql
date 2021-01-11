@@ -35,6 +35,8 @@ AS
    *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
    *                            Add Assoc invoice source system code column
    *                            Add SAP4H source system code column
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -137,6 +139,7 @@ AS
           ppw.system_cars,
           ppw.system_x360,
           ppw.system_prasco,
+          ppw.system_bivvrxc,
           ppw.trans_cls_dir,
           ppw.trans_cls_idr,
           ppw.trans_cls_rbt,
@@ -147,6 +150,7 @@ AS
           ppw.trans_adj_icw_key,
           ppw.trans_adj_x360_adj,
           ppw.trans_adj_prasco_rbtfee,
+          ppw.trans_adj_bivv_adj,
           ppw.sap_adj_dt_mblty_hrd_lnk,
           ppw.sap_adj_dt_mblty_sft_lnk,
           ppw.whls_cot_grp_cd_noncbk,

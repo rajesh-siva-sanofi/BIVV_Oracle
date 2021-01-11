@@ -26,6 +26,8 @@ AS
    *  03/01/2019  Joe Kidd      CHG-0137941: RITM-1096050: NonFAMP sub-PHS issue
    *                            Group columns, GTT column reduction, Adjust hints
    *                            Change ROW_NUMBER to DENSE_RANK for performance
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative direct adjustment lookups
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -82,12 +84,14 @@ AS
           z.root_trans_id_sap_adj,
           z.root_trans_id_cars_adj,
           z.root_trans_id_x360_adj,
+          z.root_trans_id_bivv_adj,
           -- Parent Lookup IDs ---------------------------------------------------------------------
           z.parent_trans_id_sap_adj,
           z.parent_trans_id_icw_key,
           z.parent_trans_id_cars_rbt_fee,
           z.parent_trans_id_cars_adj,
           z.parent_trans_id_x360_adj,
+          z.parent_trans_id_bivv_adj,
           z.parent_trans_id_prasco_rbtfee,
           -- Link Markers --------------------------------------------------------------------------
           z.root_link_ind,

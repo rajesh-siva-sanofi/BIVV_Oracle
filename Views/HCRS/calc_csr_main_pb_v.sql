@@ -52,6 +52,9 @@ AS
    *                            Add SAP4H to SAP Hard/Soft Linking
    *  08/28/2020  Joe Kidd      CHG-187461: Terms Percent Treatment for Direct Adjs
    *                            Only use actual terms percent, not from parent
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
+   *                            Add Bioverative direct adjustment lookups
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -113,6 +116,9 @@ AS
              -- X360 Adjustment
              WHEN z.parent_trans_id_x360_adj IS NOT NULL
              THEN z.trans_adj_x360_adj
+             -- BIVV Adjustment (separate correction invoice)
+             WHEN z.parent_trans_id_bivv_adj IS NOT NULL
+             THEN z.trans_adj_bivv_adj
              -- PRASCO Rebate/Fee linked to a direct/indirect sale
              WHEN z.parent_trans_id_prasco_rbtfee IS NOT NULL
              THEN z.trans_adj_prasco_rbtfee
@@ -121,12 +127,14 @@ AS
           z.root_trans_id_sap_adj,
           z.root_trans_id_cars_adj,
           z.root_trans_id_x360_adj,
+          z.root_trans_id_bivv_adj,
           -- Parent Lookup IDs ---------------------------------------------------------------------
           z.parent_trans_id_sap_adj,
           z.parent_trans_id_icw_key,
           z.parent_trans_id_cars_rbt_fee,
           z.parent_trans_id_cars_adj,
           z.parent_trans_id_x360_adj,
+          z.parent_trans_id_bivv_adj,
           z.parent_trans_id_prasco_rbtfee,
           -- Link Markers --------------------------------------------------------------------------
           z.root_link_ind,
@@ -142,18 +150,22 @@ AS
           z.parent_assc_invc_no,
           -- Transaction Dates ---------------------------------------------------------------------
           CASE
-             -- SAP adjustment hard linking (force paid date to original invoice)
-             WHEN z.source_sys_cde IN (z.system_sap,
-                                       z.system_sap4h)
+             -- SAP/SAP4H/BIVVRXC adjustment hard linking (force paid date to original invoice)
+             WHEN z.trans_cls_cd = z.trans_cls_dir
+              AND z.source_sys_cde IN (z.system_sap,
+                                       z.system_sap4h,
+                                       z.system_bivvrxc)
               AND z.root_link_ind = z.sap_adj_dt_mblty_hrd_lnk
               AND z.parent_link_ind = z.sap_adj_dt_mblty_hrd_lnk
-             THEN COALESCE( z.root_paid_dt, z.paid_dt)
+             THEN NVL( z.root_paid_dt, z.paid_dt)
              ELSE z.paid_dt
           END paid_dt,
           CASE
-             -- SAP adjustment soft linking, allow use of root invoice date
-             WHEN z.source_sys_cde IN (z.system_sap,
-                                       z.system_sap4h)
+             -- SAP/SAP4H/BIVVRXC adjustment soft linking, allow use of root invoice date
+             WHEN z.trans_cls_cd = z.trans_cls_dir
+              AND z.source_sys_cde IN (z.system_sap,
+                                       z.system_sap4h,
+                                       z.system_bivvrxc)
               AND z.root_link_ind = z.sap_adj_dt_mblty_sft_lnk
               AND z.parent_link_ind = z.sap_adj_dt_mblty_sft_lnk
              THEN NVL( z.root_paid_dt, z.alt_paid_dt)
@@ -417,6 +429,7 @@ AS
           z.system_sap4h,
           z.system_cars,
           z.system_x360,
+          z.system_bivvrxc,
           z.trans_cls_dir,
           z.trans_cls_idr,
           z.trans_cls_rbt,

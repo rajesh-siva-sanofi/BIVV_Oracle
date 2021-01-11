@@ -1,6 +1,5 @@
-CREATE OR REPLACE VIEW hcrs.nom_excl_v
-AS
-   SELECT
+CREATE OR REPLACE VIEW HCRS.NOM_EXCL_V AS
+WITH
    /****************************************************************************
    *    View Name : nom_excl_v
    * Date Created : 04/23/2007
@@ -20,7 +19,15 @@ AS
    *                            Remove contract low price, use lookup function,
    *                            Use new sales exclusion table format and remove
    *                            profile customer class of trade table
+   *  4/5/2020    M. Gedzior    RITM-1714054 - added sls_excl_cd to support
+   *                            subPHS transaction handling
    ****************************************************************************/
+sx AS (
+   -- sales exclusion codes
+   SELECT t.cd, t.cd_descr
+   FROM hcrs.cd_t t
+   WHERE t.cd_typ_cd = 'SX')
+SELECT /*+ LEADING( pse p ta mt pm c tt cot ) */
           -- Parameters
           pse.prfl_id,
           mt.ndc_lbl,
@@ -171,7 +178,9 @@ AS
           pse.trans_id,
           pse.trans_adj_cd,
           ta.trans_adj_descr,
-          mt.co_id
+          mt.co_id,
+          pse.sls_excl_cd,
+          (SELECT cd_descr FROM sx WHERE cd = pse.sls_excl_cd) AS sls_excl_descr
      FROM hcrs.prfl_sls_excl_t pse,
           hcrs.prfl_t p,
           hcrs.trans_adj_t ta,
@@ -190,4 +199,5 @@ AS
       AND mt.co_id = tt.co_id
       AND mt.trans_typ_cd = tt.trans_typ_cd
       AND pse.co_id = cot.co_id
-      AND pse.cls_of_trd_cd = cot.cls_of_trd_cd;
+      AND pse.cls_of_trd_cd = cot.cls_of_trd_cd
+;

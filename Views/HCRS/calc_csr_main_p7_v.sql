@@ -18,7 +18,7 @@ AS
    *                PARENT DATA
    *
    *                Gets the parent data for SAP_ADJ, CARS_RBT_FEE, CARS_ADJ,
-   *                X360_ADJ, and PRASCO_RBTFEE linkages.
+   *                X360_ADJ, BIVV_ADJ, and PRASCO_RBTFEE linkages.
    *
    *                This view only returns data when the calculation environment
    *                has been initialized with pkg_common_procedures.p_init_calc.
@@ -37,6 +37,9 @@ AS
    *                            Add SAP4H source system code column
    *  08/28/2020  Joe Kidd      CHG-187461: Terms Percent Treatment for Direct Adjs
    *                            Remove parent terms percent
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            Add Bioverative Source Systems and Trans Adjs
+   *                            Add Bioverative direct adjustment lookups
    ****************************************************************************/
           -- Source --------------------------------------------------------------------------------
           z.rec_src_ind,
@@ -82,6 +85,7 @@ AS
           z.parent_trans_id_cars_rbt_fee,
           z.parent_trans_id_cars_adj,
           z.parent_trans_id_x360_adj,
+          z.parent_trans_id_bivv_adj,
           z.parent_trans_id_prasco_rbtfee,
           -- Link Markers --------------------------------------------------------------------------
           -- Related Trans -------------------------------------------------------------------------
@@ -172,6 +176,7 @@ AS
           z.system_sap4h,
           z.system_cars,
           z.system_x360,
+          z.system_bivvrxc,
           z.trans_cls_dir,
           z.trans_cls_idr,
           z.trans_cls_rbt,
@@ -182,6 +187,7 @@ AS
           z.trans_adj_icw_key,
           z.trans_adj_x360_adj,
           z.trans_adj_prasco_rbtfee,
+          z.trans_adj_bivv_adj,
           z.sap_adj_dt_mblty_hrd_lnk,
           z.sap_adj_dt_mblty_sft_lnk,
           z.cot_hhs_grantee,
@@ -198,4 +204,5 @@ AS
                     z.parent_trans_id_cars_adj,
                     z.parent_trans_id_sap_adj,
                     z.parent_trans_id_x360_adj,
+                    z.parent_trans_id_bivv_adj,
                     z.parent_trans_id_prasco_rbtfee) = p.trans_id (+);

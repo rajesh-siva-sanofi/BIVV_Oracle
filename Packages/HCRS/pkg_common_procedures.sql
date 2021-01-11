@@ -1171,6 +1171,50 @@ AS
    *                              Reorder t_calc_param_rec columns
    *                            p_bndl_trans, p_trans_rollup_loop
    *                              Add SAP4H to SAP trans rules
+   *  04/05/2020  M. Gedzior    RITM-1714054: Add SubPHS to Sales Exclusion
+   *              Joe Kidd      New: f_is_sls_excl
+   *                            p_init_calc, p_mark_record_flush
+   *                              Renamed gv_mark_nom* to gv_mark_sls_excl*
+   *                            p_get_trans_vals
+   *                              Moved sales exclusion mode constants to pkg_contants
+   *                            p_mark_record
+   *                              Control Nom or HHS values with code
+   *                            f_mark_nominal
+   *                              Renamed from f_mark_nominal
+   *                              Renamed gv_mark_nom* to gv_mark_sls_excl*
+   *                            p_accum_trans
+   *                              Move sales exclusion check to f_is_sls_excl
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            New: p_mk_cust_cls_of_trd_wrk_t, f_mark_price_pnt
+   *                            f_calc_log
+   *                              Add setting session client info
+   *                            p_mk_prod_wrk_t
+   *                              Add Bioverative Source Systems and Trans Adjs
+   *                            p_mk_mtrx_wrk_t
+   *                              Matrix GTT now loaded in multiple passes
+   *                              Move CCOT insert to separate function
+   *                            p_mk_splt_pct_wrk_t, p_mk_mtrx_splt_bndl_wrk_t
+   *                              Matrix GTT now loaded in multiple passes
+   *                            p_calc_delete
+   *                              Fix long ops display, add session client info
+   *                            p_init_calc
+   *                              Clear new globals
+   *                            p_mark_record_flush
+   *                              Remove calc key from cache, cache price points
+   *                            p_mark_record, f_mark_sls_excl
+   *                              Remove calc key from cache, cache price points
+   *                              Move counter update outside loop
+   *                            p_accum_trans
+   *                              Sub-PHS check changed from less than to not equal
+   *                              Add NOCOPY to in/out table for performance
+   *                            p_get_trans_vals, f_is_sls_excl
+   *                              Add NOCOPY to in/out table for performance
+   *                            p_bndl_trans
+   *                              Restore GTT delete by customer (Oracle 19c Temp Undo)
+   *                              Add NOCOPY to in/out table for performance
+   *                            p_trans_rollup_loop
+   *                              Add Bioverative trans linking rules
+   *                              Move counter update to process trans group
    ****************************************************************************/
 
    -- Initialization parameters
@@ -1474,10 +1518,12 @@ AS
    -- %TYPE Anchor variables
    gv_calc_log_txt                  VARCHAR2( 30);
 
+   -- Bundle deletes GTT for every customer (set to TRUE for Oracle 19c with Temp Undo)
+   cs_bndl_delete_gtt_by_cust      CONSTANT BOOLEAN := TRUE;
+--   cs_bndl_delete_gtt_by_cust      CONSTANT BOOLEAN := FALSE;
+
    -- Transaction Amount Definition Constants
    cs_trns_amt_comp                 CONSTANT VARCHAR2( 20) := 'COMP'; -- Main Component values
-   cs_trns_amt_nom_chk              CONSTANT VARCHAR2( 20) := 'NOM_CHK'; -- Nominal check values
-   cs_trns_amt_hhs_chk              CONSTANT VARCHAR2( 20) := 'HHS_CHK'; -- HHS check values
 
    -- Calculation constants
    cs_calc_shutdown_interval        CONSTANT NUMBER := 6000; -- In 100ths of seconds
@@ -1485,6 +1531,7 @@ AS
    cs_qry_main                      CONSTANT hcrs.comp_typ_t.comp_typ_cd%TYPE := 'MAIN'; -- Main query
 
    -- Calc Log Constants
+   cs_calc_log_update_interval      CONSTANT NUMBER := 5; -- Default update interval during calc run
    cs_calc_log_timer_last_update    CONSTANT hcrs.pkg_utils.gv_timer_id%TYPE := 'CALC_LOG_LAST_UPDATE';
    cs_calc_log_show_time_remain     CONSTANT BOOLEAN := FALSE; -- Show remaining time in user message
 
@@ -1540,15 +1587,9 @@ AS
 
    -- Marked transaction cache table (full data to write to db)
    TYPE t_mark_rec IS RECORD
-      (prfl_id          hcrs.prfl_prod_comp_trans_t.prfl_id%TYPE,
-       ndc_lbl          hcrs.prfl_prod_comp_trans_t.ndc_lbl%TYPE,
-       ndc_prod         hcrs.prfl_prod_comp_trans_t.ndc_prod%TYPE,
-       ndc_pckg         hcrs.prfl_prod_comp_trans_t.ndc_pckg%TYPE,
-       calc_typ_cd      hcrs.prfl_prod_comp_trans_t.calc_typ_cd%TYPE,
-       comp_typ_cd      hcrs.prfl_prod_comp_trans_t.comp_typ_cd%TYPE,
+      (comp_typ_cd      hcrs.prfl_prod_comp_trans_t.comp_typ_cd%TYPE,
        trans_id         hcrs.prfl_prod_comp_trans_t.trans_id%TYPE,
        price_pnt_seq_no hcrs.bp_pnt_trans_dtl_t.price_pnt_seq_no%TYPE,
-       co_id            hcrs.prfl_prod_comp_trans_t.co_id%TYPE,
        cls_of_trd_cd    hcrs.prfl_prod_comp_trans_t.cls_of_trd_cd%TYPE,
        trans_adj_cd     hcrs.prfl_prod_comp_trans_t.trans_adj_cd%TYPE,
        root_trans_id    hcrs.prfl_prod_comp_trans_t.root_trans_id%TYPE,
@@ -1569,11 +1610,23 @@ AS
    -- Marked transaction cache table (all transactions marked by components)
    TYPE t_mark_id_tbl IS TABLE OF VARCHAR2(1) INDEX BY VARCHAR2(100);
 
-   -- Marked nominal transaction cache table (full data to write to db)
-   TYPE t_mark_nom_rec IS RECORD
-      (prfl_id         hcrs.prfl_sls_excl_t.prfl_id%TYPE,
-       trans_id        hcrs.prfl_sls_excl_t.trans_id%TYPE,
-       co_id           hcrs.prfl_sls_excl_t.co_id%TYPE,
+   -- Marked price point key cache tables (full data to write to db)
+   -- Bulk updates requires INDEX BY BINARY_INTEGER (arbitrary)
+   -- but we also need INDEX BY VARCHAR2 (component + price point) to get seq no
+   -- Stores the price point key to arbitrary binary integer key
+   TYPE t_mark_pp_key_rec IS RECORD
+      (mark_pp          BINARY_INTEGER);
+   TYPE t_mark_pp_key_tbl IS TABLE OF t_mark_pp_key_rec INDEX BY VARCHAR2(100);
+   -- Stores the arbitrary binary integer key to price point info
+   TYPE t_mark_pp_rec IS RECORD
+      (price_pnt_seq_no hcrs.prfl_prod_bp_pnt_t.price_pnt_seq_no%TYPE,
+       occurs_cnt       hcrs.prfl_prod_bp_pnt_t.occurs_cnt%TYPE,
+       cmt_txt          hcrs.prfl_prod_bp_pnt_t.cmt_txt%TYPE);
+   TYPE t_mark_pp_tbl IS TABLE OF t_mark_pp_rec INDEX BY BINARY_INTEGER;
+
+   -- Marked sales exclusion transaction cache table (full data to write to db)
+   TYPE t_mark_sls_excl_rec IS RECORD
+      (trans_id        hcrs.prfl_sls_excl_t.trans_id%TYPE,
        cls_of_trd_cd   hcrs.prfl_sls_excl_t.cls_of_trd_cd%TYPE,
        over_ind        hcrs.prfl_sls_excl_t.over_ind%TYPE,
        apprvd_ind      hcrs.prfl_sls_excl_t.apprvd_ind%TYPE,
@@ -1597,11 +1650,12 @@ AS
        splt_pct_seq_no hcrs.prfl_sls_excl_t.splt_pct_seq_no%TYPE,
        bndl_cd         hcrs.prfl_sls_excl_t.bndl_cd%TYPE,
        bndl_seq_no     hcrs.prfl_sls_excl_t.bndl_seq_no%TYPE,
-       cmt_txt         hcrs.prfl_sls_excl_t.cmt_txt%TYPE);
-   TYPE t_mark_nom_tbl IS TABLE OF t_mark_nom_rec INDEX BY BINARY_INTEGER;
+       cmt_txt         hcrs.prfl_sls_excl_t.cmt_txt%TYPE,
+       sls_excl_cd     hcrs.prfl_sls_excl_t.sls_excl_cd%TYPE);
+   TYPE t_mark_sls_excl_tbl IS TABLE OF t_mark_sls_excl_rec INDEX BY BINARY_INTEGER;
 
-   -- Marked nominal transaction cache table (all transactions marked as nominal)
-   TYPE t_mark_nom_id_tbl IS TABLE OF VARCHAR2(1) INDEX BY BINARY_INTEGER;
+   -- Marked sales exclusion transaction cache table (all transactions marked as excluded sales)
+   TYPE t_mark_sls_excl_id_tbl IS TABLE OF VARCHAR2(1) INDEX BY BINARY_INTEGER;
 
    -- Processed Customer table
    TYPE t_cust_id_tbl IS TABLE OF NUMBER INDEX BY hcrs.cust_t.cust_id%TYPE;
@@ -1636,12 +1690,15 @@ AS
    -- Marked records cache, ID lookup, customer ID
    gv_mark_tbl                     t_mark_tbl;
    gv_mark_id_tbl                  t_mark_id_tbl;
+   gv_mark_pp_key_tbl              t_mark_pp_key_tbl;
+   gv_mark_pp_tbl                  t_mark_pp_tbl;
    gv_mark_cust_id                 hcrs.prfl_cust_cls_of_trd_t.cust_id%TYPE;
    gv_mark_cust_row_cnt_max        NUMBER;
 
-   -- Marked nominal records cache, ID lookup
-   gv_mark_nom_tbl                 t_mark_nom_tbl;
-   gv_mark_nom_id_tbl              t_mark_nom_id_tbl;
+   -- Marked sales exclusion records cache, ID lookup
+   gv_mark_sls_excl_hhs            BOOLEAN := (SYSDATE >= TO_DATE( '01/01/2021', 'MM/DD/YYYY'));
+   gv_mark_sls_excl_tbl            t_mark_sls_excl_tbl;
+   gv_mark_sls_excl_id_tbl         t_mark_sls_excl_id_tbl;
 
    -- These variables are used to short circuit the calculation processes as needed
    gv_bndl_use_dra_prod            BOOLEAN := TRUE; -- Enable product bundles
@@ -1655,9 +1712,12 @@ AS
    -- These variables track the bundling customer to short circuit the bundling process where possible
    -- This variable tracks bundling customers to short circuit the bundling process where possible
    -- Key is customer ID, existance = evaluated for bundling, TRUE = has bundles, FALSE = no bundles
+   gv_bndl_cust_id                 hcrs.prfl_prod_bndl_smry_wrk_t.cust_id%TYPE;                -- Bundle Current Customer
    gv_bndl_cust_id_tbl             t_cust_id_tbl;                                              -- Bundled Processed main customers
+   gv_bndl_cust_id_wrk_tbl         t_cust_id_tbl;                                              -- Bundled Processed main customers in GTT
    gv_bndl_cust_tbl                hcrs.bndl_cust_tbl_typ := hcrs.bndl_cust_tbl_typ();         -- Customer for config query
    gv_bndl_cust_cond_cnt           NUMBER;                                                     -- >0 If bundle condition overrides found
+   gv_bndl_trans_wrk_cnt           NUMBER;                                                     -- Count of rows added to trans work table
    gv_bndl_trans_ids               hcrs.bndl_trans_id_tbl_typ := hcrs.bndl_trans_id_tbl_typ(); -- Transactions for adj query
 
    -- These variables track bundling statistics for storage
@@ -1679,6 +1739,7 @@ AS
    gv_calc_log_run_seq             hcrs.prfl_prod_calc_log_t.run_seq%TYPE;
    gv_calc_log_step                hcrs.prfl_prod_calc_log_t.step%TYPE;
    gv_calc_log_module_name         hcrs.pkg_utils.gv_module_name%TYPE;
+   gv_calc_log_client_info         hcrs.pkg_utils.gv_client_info%TYPE;
 
    -- These variables are used by the calc to control calc log call timings
    gv_calc_log_update_interval     NUMBER; -- Update interval in seconds, null or <= 0 means every call
@@ -2810,7 +2871,7 @@ AS
       RETURN VARCHAR2
    IS
       /*************************************************************************
-      * Function Name : p_calc_log
+      * Function Name : f_calc_log
       *  Input params : i_step_descr - Step Description
       *               : i_user_msg - User message for front end.
       *               : i_comp_typ_cd - Component Type
@@ -2849,6 +2910,8 @@ AS
       *  03/01/2019  Joe Kidd      CHG-0137941: RITM-1096050: NonFAMP sub-PHS issue
       *                            Add force update parameter, move timer to pkg_utils
       *                            Move longops rountines to pkg_utils
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Add setting session client info
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.f_calc_log';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Sets calc log messages without writing to log';
@@ -2866,7 +2929,7 @@ AS
          -- Get the longops row count values
          -----------------------------------------------------------------------
          v_rows_done := NVL( i_rows_done, pkg_utils.f_counter_get_done( cs_calc_log_cntr_rows));
-         v_rows_total := NVL( i_rows_total, pkg_utils.f_counter_get_total(cs_calc_log_cntr_rows));
+         v_rows_total := NVL( i_rows_total, pkg_utils.f_counter_get_total( cs_calc_log_cntr_rows));
          -----------------------------------------------------------------------
          -- If forcing an update, or the update interval is not positve,
          -- or it has passed, or the main counter is not running (v_rows_done)
@@ -2901,7 +2964,7 @@ AS
             -----------------------------------------------------------------------
             -- Register Calc in App Info
             -----------------------------------------------------------------------
-            pkg_utils.p_appinfo_set( gv_calc_log_module_name, v_step_descr, '');
+            pkg_utils.p_appinfo_set( gv_calc_log_module_name, v_step_descr, gv_calc_log_client_info);
             -----------------------------------------------------------------------
             -- Update User Message
             -----------------------------------------------------------------------
@@ -3022,7 +3085,7 @@ AS
          -- Get the final longops values
          -----------------------------------------------------------------------
          v_rows_done := pkg_utils.f_counter_get_done( cs_calc_log_cntr_rows);
-         v_rows_total := pkg_utils.f_counter_get_total(cs_calc_log_cntr_rows);
+         v_rows_total := pkg_utils.f_counter_get_total( cs_calc_log_cntr_rows);
          IF     v_rows_done IS NOT NULL
             AND v_rows_total IS NOT NULL
          THEN
@@ -4349,12 +4412,15 @@ AS
       *                            Add normal exception handling (Calc Debug Mode)
       *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
       *                            Add SAP4H source system constants
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Add Bioverative Source Systems and Trans Adjs
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_mk_prod_wrk_t';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Populates the product working table';
       cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error while populating the product working table';
    BEGIN
-      INSERT INTO hcrs.prfl_prod_wrk_t
+      INSERT /*+ p_mk_prod_wrk_t */
+        INTO hcrs.prfl_prod_wrk_t
          (prfl_id,
           co_id,
           ndc_lbl,
@@ -4444,6 +4510,7 @@ AS
           system_cars,
           system_x360,
           system_prasco,
+          system_bivvrxc,
           trans_cls_dir,
           trans_cls_idr,
           trans_cls_rbt,
@@ -4462,6 +4529,7 @@ AS
           trans_adj_prasco_rbtfee,
           trans_adj_prasco_rollup,
           trans_adj_rollup,
+          trans_adj_bivv_adj,
           trans_dt_range_ann_off,
           whls_cot_grp_cd_noncbk,
           whls_cot_incl_ind_noncbk,
@@ -4564,6 +4632,7 @@ AS
                 pkg_constants.cs_system_cars system_cars,
                 pkg_constants.cs_system_x360 system_x360,
                 pkg_constants.cs_system_prasco system_prasco,
+                pkg_constants.cs_system_bivvrxc system_bivvrxc,
                 pkg_constants.cs_trans_cls_dir trans_cls_dir,
                 pkg_constants.cs_trans_cls_idr trans_cls_idr,
                 pkg_constants.cs_trans_cls_rbt trans_cls_rbt,
@@ -4582,6 +4651,7 @@ AS
                 pkg_constants.cs_trans_adj_prasco_rbtfee trans_adj_prasco_rbtfee,
                 pkg_constants.cs_trans_adj_prasco_rollup trans_adj_prasco_rollup,
                 pkg_constants.cs_trans_adj_rollup trans_adj_rollup,
+                pkg_constants.cs_trans_adj_bivv_adj trans_adj_bivv_adj,
                 pkg_constants.cs_trans_dt_range_ann_off trans_dt_range_ann_off,
                 pkg_constants.cs_whls_cot_grp_cd_noncbk whls_cot_grp_cd_noncbk,
                 pkg_constants.cs_whls_cot_incl_ind_noncbk whls_cot_incl_ind_noncbk,
@@ -4722,7 +4792,8 @@ AS
       -------------------------------------------------------
       -- Populate the calc component definition working table
       -------------------------------------------------------
-      INSERT INTO hcrs.prfl_prod_calc_comp_def_wrk_t
+      INSERT /*+ p_mk_calc_comp_def_wrk_t_1 */
+        INTO hcrs.prfl_prod_calc_comp_def_wrk_t
          (prfl_id,
           co_id,
           ndc_lbl,
@@ -4862,7 +4933,8 @@ AS
       ----------------------------------------------------------
       -- Populate the calc component definition working table #2
       ----------------------------------------------------------
-      INSERT INTO hcrs.prfl_prod_calc_comp_def2_wrk_t
+      INSERT /*+ p_mk_calc_comp_def_wrk_t_2 */
+        INTO hcrs.prfl_prod_calc_comp_def2_wrk_t
          (trans_typ_grp_cd,
           trans_typ_incl_ind,
           cust_cot_grp_cd,
@@ -5258,24 +5330,49 @@ AS
 
 
    PROCEDURE p_mk_mtrx_wrk_t
+      (i_pass IN NUMBER)
    IS
       /*************************************************************************
       * Procedure Name : p_mk_mtrx_wrk_t
-      *   Input params : None
+      *   Input params : i_pass - the pass number
       *  Output params : None
       *        Returns : None
       *   Date Created : 12/05/2007
       *         Author : Joe Kidd
       *    Description : Populates the matrix working table (GTT)
-      *                  Populate customer COT working table (GTT)
       *
-      *                  1. Load Matrix GTT with COTs/TTs used by Components or
-      *                     by Split Percentage mappings.
-      *                  2. Load Customer COT table with customers where the COT
-      *                     is in the matrix and the customer location is used by
-      *                     components.
-      *                  3. Delete COTs from the Matrix GTT that are not assigned
-      *                     to customers or split percentages.
+      *                  A Matrix COT+TT Combination is included when:
+      *                  [P1] 1a. Needed by Active Components
+      *                  [P2] 1b. AND COT is in Customer COTs
+      *                           OR
+      *                  [P2] 2c. Needed by Src Split Pct (where both Src & Dst
+      *                           COT+TT are used by Components)
+      *                  [P2] 2b. AND Source Split Pct COT is in Customer COTs
+      *                           OR
+      *                  [P2] 3.  Needed by Dst Split Pct (where both Src & Dst
+      *                           COT+TT are used by Components)
+      *
+      *                  [P1} Pass 1:
+      *                  Load the Matrix GTT with the COT/TT combinations for
+      *                  the Supergroups and eligiblity from the Component GTT.
+      *
+      *                  There is no need to retrieve any COT/TT combinations
+      *                  that are not needed by components.
+      *
+      *                  Between pass 1 and 2, the Split Percentage GTT is loaded,
+      *                  the Customer COT GTT is laoded, and the Split Percentage
+      *                  GTT is re-loaded.
+      *
+      *                  [P2} Pass 2:
+      *                  Reload the Matrix GTT with the COT/TT combinations for
+      *                  the Supergroups and eligiblity from the Component GTT,
+      *                  excluding those where the COT is not in the Customer
+      *                  COT GTT, AND the Source and Destination COT/TT
+      *                  combinations for the Split Percentage GTT.
+      *
+      *                  There is no need to retrieve any COT/TT combinations
+      *                  that are not needed by components and Split Percentages,
+      *                  or the COT is not assigned to any customers.
       *
       *                  NOTE: This procedure should only write to temporary
       *                  tables, so that it can be used during testing/debugging
@@ -5310,16 +5407,18 @@ AS
       *                            Centralize GTT deletes
       *                            Add normal exception handling (Calc Debug Mode)
       *                            GTT column reductions
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Matrix GTT now loaded in multiple passes
+      *                            Move CCOT insert to separate function
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_mk_mtrx_wrk_t';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Populates the matrix working table';
       cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error while populating the matrix working table';
    BEGIN
-      ---------------------------------------------------------------------------------------------------
-      -- Limit matrix entries to only entries that will be used by the calculation (part 1)
-      ---------------------------------------------------------------------------------------------------
-      -- COT or TT must be used by the Component Definitions or Split Percentages
-      INSERT INTO hcrs.prfl_mtrx_wrk_t
+      -- Always delete because this is called multiple times, once each for each pass
+      DELETE FROM hcrs.prfl_mtrx_wrk_t;
+      INSERT /*+ p_mk_mtrx_wrk_t */
+        INTO hcrs.prfl_mtrx_wrk_t
          (cls_of_trd_cd,
           trans_typ_cd,
           cot_incl_ind,
@@ -5335,7 +5434,10 @@ AS
           uses_net_dsc)
          WITH pw
            AS (-- Get the calc parameters and constants
-               SELECT ppw.prfl_id,
+               SELECT /*+ NO_MERGE
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      ppw.prfl_id,
                       ppw.co_id,
                       ppw.ndc_lbl,
                       ppw.ndc_prod,
@@ -5345,6 +5447,9 @@ AS
                       ppw.calc_typ_cd,
                       ppw.calc_mthd_cd,
                       ppw.pri_whls_mthd_cd,
+                      ppw.tt_indirect_sales,
+                      ppw.flag_yes,
+                      ppw.flag_no,
                       pkg_constants.cs_trans_dllrs_net dllrs_net,
                       pkg_constants.cs_trans_dllrs_dsc dllrs_dsc,
                       pkg_constants.cs_trans_dllrs_bndl dllrs_bndl,
@@ -5352,14 +5457,18 @@ AS
                       pkg_constants.cs_trans_bndl_none bndl_none,
                       pkg_constants.cs_trans_dt_paid trans_dt_paid,
                       pkg_constants.cs_trans_dt_earn trans_dt_earn,
-                      ppw.flag_yes,
-                      ppw.flag_no
+                      i_pass pass
                  FROM hcrs.prfl_prod_wrk_t ppw
                 WHERE ppw.calc_min_ndc = ppw.flag_yes
               ),
               pm
-           AS (-- Materialize the matrix for performance
-               SELECT pm.cls_of_trd_cd,
+           AS (-- Materialize the Matrix for performance
+               SELECT /*+ NO_MERGE
+                          LEADING( pw pm )
+                          USE_NL( pw pm )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      pm.cls_of_trd_cd,
                       pm.trans_typ_cd,
                       pm.cot_incl_ind,
                       pm.incl_ind,
@@ -5369,76 +5478,128 @@ AS
                       pm.cot_end_dt,
                       pm.tt_begn_dt,
                       pm.tt_end_dt,
-                      pw.flag_yes,
-                      pw.flag_no
-                 FROM pw,
+                      -- Contants/Parameters
+                      z.flag_yes,
+                      z.flag_no,
+                      z.pass
+                 FROM pw z,
                       hcrs.prfl_mtrx_v pm
-                WHERE pw.prfl_id = pm.prfl_id
-                  AND pw.calc_typ_cd = pm.calc_typ_cd
-                  AND pw.co_id = pm.co_id
-                  AND pw.pri_whls_mthd_cd = pm.pri_whls_mthd_cd
+                WHERE z.prfl_id = pm.prfl_id
+                  AND z.calc_typ_cd = pm.calc_typ_cd
+                  AND z.co_id = pm.co_id
+                  AND z.pri_whls_mthd_cd = pm.pri_whls_mthd_cd
                   AND ROWNUM > 0 -- materialize
               ),
-              cmp
-           AS (-- Get COT-TT SG and Elig combinations from component definitions
+              p1a
+           AS (-- PASS 1a: Get COT-TT SG and Elig combinations from Component definitions
                -- Customer COT-TT SG and Elig combinations
-               -- Wholesaler COT-TT SG and Elig combinations
-               SELECT DISTINCT
+               SELECT /*+ NO_MERGE
+                          LEADING( pw ppccdw )
+                          USE_NL( pw ppccdw )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
                       ppccdw.trans_typ_grp_cd,
-                      DECODE( n.n, 1, ppccdw.cust_cot_grp_cd, ppccdw.whls_cot_grp_cd) cot_grp_cd,
+                      ppccdw.cust_cot_grp_cd cot_grp_cd,
                       ppccdw.trans_typ_incl_ind incl_ind,
-                      DECODE( n.n, 1, ppccdw.cust_cot_incl_ind, ppccdw.whls_cot_incl_ind) cot_incl_ind,
-                      DECODE( ppccdw.comp_paid_bgn_dt, NULL, pw.flag_no, pw.flag_yes) uses_paid_dt,
-                      DECODE( ppccdw.comp_earn_bgn_dt, NULL, pw.flag_no, pw.flag_yes) uses_earn_dt,
+                      ppccdw.cust_cot_incl_ind cot_incl_ind,
+                      DECODE( ppccdw.comp_paid_bgn_dt, NULL, z.flag_no, z.flag_yes) uses_paid_dt,
+                      DECODE( ppccdw.comp_earn_bgn_dt, NULL, z.flag_no, z.flag_yes) uses_earn_dt,
                       CASE
-                         WHEN pw.flag_yes IN (ppccdw.bndl_comp_tran_ind,
-                                              ppccdw.bndl_comp_nom_ind,
-                                              ppccdw.bndl_comp_hhs_ind)
-                         THEN pw.flag_yes
+                         WHEN z.flag_yes IN (ppccdw.bndl_comp_tran_ind,
+                                             ppccdw.bndl_comp_nom_ind,
+                                             ppccdw.bndl_comp_hhs_ind)
+                         THEN z.flag_yes
                       END uses_net_dsc
-                 FROM pw,
-                      ( -- Allows a single scan to give both cust and whls above
-                        SELECT 1 n FROM dual UNION ALL
-                        SELECT 2 n FROM dual
-                      ) n,
+                 FROM pw z,
                       hcrs.prfl_prod_calc_comp_def2_wrk_t ppccdw
-                WHERE ROWNUM > 0 -- materialize
-                  AND ppccdw.active_ind = pw.flag_yes
+                WHERE z.flag_yes = ppccdw.active_ind
+               UNION
+               -- Wholesaler COT-TT SG and Elig combinations
+               SELECT /*+ NO_MERGE
+                          LEADING( pw ppccdw )
+                          USE_NL( pw ppccdw )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      ppccdw.trans_typ_grp_cd,
+                      ppccdw.whls_cot_grp_cd cot_grp_cd,
+                      ppccdw.trans_typ_incl_ind incl_ind,
+                      ppccdw.whls_cot_incl_ind cot_incl_ind,
+                      DECODE( ppccdw.comp_paid_bgn_dt, NULL, z.flag_no, z.flag_yes) uses_paid_dt,
+                      DECODE( ppccdw.comp_earn_bgn_dt, NULL, z.flag_no, z.flag_yes) uses_earn_dt,
+                      CASE
+                         WHEN z.flag_yes IN (ppccdw.bndl_comp_tran_ind,
+                                             ppccdw.bndl_comp_nom_ind,
+                                             ppccdw.bndl_comp_hhs_ind)
+                         THEN z.flag_yes
+                      END uses_net_dsc
+                 FROM pw z,
+                      hcrs.prfl_prod_calc_comp_def2_wrk_t ppccdw
+                WHERE z.flag_yes = ppccdw.active_ind
+                  AND z.tt_indirect_sales = ppccdw.trans_typ_grp_cd
               ),
-              sp
-           AS (-- Get the split percentage COT/TTs
-               SELECT pcpspw.src_cls_of_trd_cd cls_of_trd_cd,
+              p1
+           AS (-- PASS 1: Get COT-TT SG and Elig combinations from Component definitions
+               -- Combine the matrix with the component definitions
+               SELECT /*+ NO_MERGE
+                          LEADING( pm cd )
+                          USE_HASH( pm cd )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      z.cls_of_trd_cd,
+                      z.trans_typ_cd,
+                      z.cot_incl_ind,
+                      z.incl_ind,
+                      z.cot_grp_cd,
+                      z.trans_typ_grp_cd,
+                      z.cot_begn_dt,
+                      z.cot_end_dt,
+                      z.tt_begn_dt,
+                      z.tt_end_dt,
+                      y.uses_paid_dt,
+                      y.uses_earn_dt,
+                      y.uses_net_dsc,
+                      -- Contants/Parameters
+                      z.flag_no,
+                      z.pass
+                 FROM pm z,
+                      p1a y
+                WHERE z.trans_typ_grp_cd = y.trans_typ_grp_cd
+                  AND z.cot_grp_cd = y.cot_grp_cd
+                  AND z.cot_incl_ind = y.cot_incl_ind
+                  AND z.incl_ind = y.incl_ind
+              ),
+              p2a
+           AS (-- PASS 2a: Get COT-TT SG and Elig combinations from Component definitions where
+               --          COT exists in Customer COT, and Split Percentage definitions where
+               --          Source COT exists in Customer COT
+               -- Source COT-TT combinations (already limited to those that exist in Customer COT)
+               SELECT /*+ NO_MERGE
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      pcpspw.src_cls_of_trd_cd cls_of_trd_cd,
                       pcpspw.src_trans_typ_cd trans_typ_cd
-                 FROM hcrs.prfl_contr_prod_splt_pct_wrk_t pcpspw
+                 FROM pw z,
+                      hcrs.prfl_contr_prod_splt_pct_wrk_t pcpspw
+                WHERE z.pass = 2
                UNION -- needed to distinct
-               SELECT pcpspw.dst_cls_of_trd_cd cls_of_trd_cd,
+               -- Destination COT-TT combinations
+               SELECT /*+ NO_MERGE
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      pcpspw.dst_cls_of_trd_cd cls_of_trd_cd,
                       pcpspw.dst_trans_typ_cd trans_typ_cd
-                 FROM hcrs.prfl_contr_prod_splt_pct_wrk_t pcpspw
+                 FROM pw z,
+                      hcrs.prfl_contr_prod_splt_pct_wrk_t pcpspw
+                WHERE z.pass = 2
               ),
-              cb
-           AS (-- Combine the matrix with the component definitions and split percentages
-               SELECT pm.cls_of_trd_cd,
-                      pm.trans_typ_cd,
-                      pm.cot_incl_ind,
-                      pm.incl_ind,
-                      pm.cot_grp_cd,
-                      pm.trans_typ_grp_cd,
-                      pm.cot_begn_dt,
-                      pm.cot_end_dt,
-                      pm.tt_begn_dt,
-                      pm.tt_end_dt,
-                      cmp.uses_paid_dt,
-                      cmp.uses_earn_dt,
-                      cmp.uses_net_dsc,
-                      pm.flag_no
-                 FROM pm,
-                      cmp
-                WHERE pm.trans_typ_grp_cd = cmp.trans_typ_grp_cd
-                  AND pm.cot_grp_cd = cmp.cot_grp_cd
-                  AND pm.cot_incl_ind = cmp.cot_incl_ind
-                  AND pm.incl_ind = cmp.incl_ind
-               UNION ALL
-               SELECT pm.cls_of_trd_cd,
+              p2
+           AS (-- PASS 2: Get COT-TT SG and Elig combinations from Component definitions where
+               --         COT exists in Customer COT, and Split Percentage definitions where
+               --         Source COT exists in Customer COT
+               -- Combine the split percentages with the matrix
+               SELECT /*+ NO_MERGE
+                      */
+                      pm.cls_of_trd_cd,
                       pm.trans_typ_cd,
                       pm.cot_incl_ind,
                       pm.incl_ind,
@@ -5451,207 +5612,120 @@ AS
                       '' uses_paid_dt,
                       '' uses_earn_dt,
                       '' uses_net_dsc,
-                      pm.flag_no
-                 FROM pm,
-                      sp
-                WHERE pm.cls_of_trd_cd = sp.cls_of_trd_cd
-                  AND pm.trans_typ_cd = sp.trans_typ_cd
-              )
-         -- Combine the component definition values with the matrix
-         SELECT cb.cls_of_trd_cd,
-                cb.trans_typ_cd,
-                cb.cot_incl_ind,
-                cb.incl_ind,
-                cb.cot_grp_cd,
-                cb.trans_typ_grp_cd,
-                cb.cot_begn_dt,
-                cb.cot_end_dt,
-                cb.tt_begn_dt,
-                cb.tt_end_dt,
-                -- If any line uses paid date, set to Y
-                NVL( MAX( cb.uses_paid_dt), cb.flag_no) uses_paid_dt,
-                -- If any line uses earn date, set to Y
-                NVL( MAX( cb.uses_earn_dt), cb.flag_no) uses_earn_dt,
-                -- If any line uses net discount, set to Y
-                NVL( MAX( cb.uses_net_dsc), cb.flag_no) uses_net_dsc
-           FROM cb
-          GROUP BY cb.cls_of_trd_cd,
-                   cb.trans_typ_cd,
-                   cb.cot_incl_ind,
-                   cb.incl_ind,
-                   cb.cot_grp_cd,
-                   cb.trans_typ_grp_cd,
-                   cb.cot_begn_dt,
-                   cb.cot_end_dt,
-                   cb.tt_begn_dt,
-                   cb.tt_end_dt,
-                   cb.flag_no
-          ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
-      ---------------------------------------------------------------------------------------------------
-      -- Limit customer classes of trade to only what will be used by the calculation
-      ---------------------------------------------------------------------------------------------------
-      INSERT INTO hcrs.prfl_cust_cls_of_trd_wrk_t
-         (cust_id,
-          strt_dt,
-          end_dt,
-          cls_of_trd_cd,
-          cust_loc_cd)
-         WITH cmp
-           AS (-- Get the COT supergroups and locations for active Components
-               SELECT ppw.prfl_id,
-                      ppw.co_id,
-                      ppccdw.cust_cot_grp_cd,
-                      ppccdw.cust_loc_cd_list
-                 FROM hcrs.prfl_prod_wrk_t ppw,
-                      hcrs.prfl_prod_calc_comp_def2_wrk_t ppccdw
-                WHERE ppw.calc_min_ndc = ppw.flag_yes
-                  AND ppccdw.active_ind = ppw.flag_yes
-               UNION -- Does DISTINCT
-               SELECT ppw.prfl_id,
-                      ppw.co_id,
-                      ppccdw.whls_cot_grp_cd cust_cot_grp_cd,
-                      ppccdw.whls_loc_cd_list cust_loc_cd_list
-                 FROM hcrs.prfl_prod_wrk_t ppw,
-                      hcrs.prfl_prod_calc_comp_def2_wrk_t ppccdw
-                WHERE ppw.calc_min_ndc = ppw.flag_yes
-                  AND ppccdw.active_ind = ppw.flag_yes
-                  AND ppw.tt_indirect_sales = ppccdw.trans_typ_grp_cd
-              ),
-              cot
-           AS (-- Convert COT supergroups to COTs, with locations for active Components
-               SELECT DISTINCT
-                      z.prfl_id,
-                      z.co_id,
-                      pmw.cls_of_trd_cd,
-                      z.cust_loc_cd_list
-                 FROM cmp z,
-                      hcrs.prfl_mtrx_wrk_t pmw
-                WHERE z.cust_cot_grp_cd = pmw.cot_grp_cd
-              ),
-              ccot0
-           AS (-- Get the Customers for the COTs for active Components with locations
-               SELECT pccot.cust_id,
-                      pccot.strt_dt,
-                      pccot.end_dt,
-                      pccot.cls_of_trd_cd,
-                      -- Get customer location code
-                      (SELECT hcrs.pkg_common_procedures.f_get_cust_loc_cd_list
-                                 (pkg_constants.cs_cust_loc_cd_mode_cust,
-                                  pccot.domestic_ind,
-                                  pccot.territory_ind) cust_loc_cd
-                         FROM dual) cust_loc_cd,
-                      z.cust_loc_cd_list
-                 FROM cot z,
-                      hcrs.prfl_cust_cls_of_trd_t pccot
-                WHERE z.prfl_id = pccot.prfl_id
-                  AND z.co_id = pccot.co_id
-                  AND z.cls_of_trd_cd = pccot.cls_of_trd_cd
-              ),
-              ccot
-           AS (-- Remove customers with wrong locations for COT
-               SELECT z.cust_id,
-                      z.strt_dt,
-                      z.end_dt,
-                      z.cls_of_trd_cd,
-                      z.cust_loc_cd
-                 FROM ccot0 z
-                WHERE z.cust_loc_cd_list LIKE '%' || z.cust_loc_cd || '%'
-              ),
-              dt0
-           AS (-- Collapse contigous/overlapping date ranges: Analyze the dates on the key
-               SELECT /*+ NO_MERGE */
-                      z.cust_id,
-                      z.strt_dt,
-                      z.end_dt,
-                      z.cls_of_trd_cd,
-                      -- Get the end date of the previous row partitioned by the key, ordered by the start date, end date
-                      LAG( z.end_dt)
-                         OVER (PARTITION BY z.cust_id,
-                                            z.cls_of_trd_cd
-                                   ORDER BY z.strt_dt,
-                                            z.end_dt) + 1 prev_end_dt,
-                      -- Get the row number partitioned by the key, ordered by the start date, end date
-                      ROW_NUMBER()
-                         OVER (PARTITION BY z.cust_id,
-                                            z.cls_of_trd_cd
-                                   ORDER BY z.strt_dt,
-                                            z.end_dt) row_num,
-                      z.cust_loc_cd
-                 FROM ccot z
-              ),
-              dt1
-           AS (-- Collapse contigous/overlapping date ranges: Mark non-contiguous rows
-               SELECT /*+ NO_MERGE */
-                      z.cust_id,
-                      z.strt_dt,
-                      z.end_dt,
-                      z.cls_of_trd_cd,
-                      z.prev_end_dt,
-                      z.row_num,
-                      CASE
-                         -- Row is non-contiguous/non-overlapping
-                         WHEN z.prev_end_dt IS NULL
-                           OR z.strt_dt > z.prev_end_dt
-                         THEN z.row_num
-                         -- Row is contiguous/overlapping
-                         ELSE 0
-                      END mk_num,
-                      z.cust_loc_cd
-                 FROM dt0 z
-              ),
-              dt
-           AS (-- Collapse contigous/overlapping date ranges: Mark contiguous rows with the same group number
-               SELECT /*+ NO_MERGE */
-                      z.cust_id,
-                      z.strt_dt,
-                      z.end_dt,
-                      z.cls_of_trd_cd,
-                      z.prev_end_dt,
-                      z.row_num,
-                      z.mk_num,
-                      MAX( z.mk_num)
-                         OVER (PARTITION BY z.cust_id,
-                                            z.cls_of_trd_cd
-                                   ORDER BY z.strt_dt,
-                                            z.end_dt) mk_grp,
-                      z.cust_loc_cd
-                 FROM dt1 z
-              )
-         -- Collapse contigous date ranges
-         SELECT /*+ NO_MERGE */
-                z.cust_id,
-                MIN( z.strt_dt) strt_dt,
-                MAX( z.end_dt) end_dt,
-                z.cls_of_trd_cd,
-                z.cust_loc_cd
-           FROM dt z
-          GROUP BY z.cust_id,
-                   z.cls_of_trd_cd,
-                   z.cust_loc_cd,
-                   z.mk_grp
-          ORDER BY 1, 2, 3;
-      ---------------------------------------------------------------------------------------------------
-      -- Limit matrix entries to only entries that will be used by the calculation (part 2)
-      ---------------------------------------------------------------------------------------------------
-      -- Remove COTs from the matrix that are not used by customers and not used by split percentages
-      DELETE
-        FROM hcrs.prfl_mtrx_wrk_t pmw
-       WHERE NOT EXISTS
-             (-- Check the customer COTs
-               SELECT NULL
-                 FROM hcrs.prfl_cust_cls_of_trd_wrk_t pccotw
-                WHERE pccotw.cls_of_trd_cd = pmw.cls_of_trd_cd
-             )
-         AND NOT EXISTS
-             (-- Check the split percentage COTs
-               SELECT NULL
-                 FROM hcrs.prfl_contr_prod_splt_pct_wrk_t pcpspw
-                WHERE pcpspw.src_cls_of_trd_cd = pmw.cls_of_trd_cd
+                      pm.flag_no,
+                      pm.pass
+                 FROM p2a z,
+                      pm
+                WHERE z.cls_of_trd_cd = pm.cls_of_trd_cd
+                  AND z.trans_typ_cd = pm.trans_typ_cd
+                  AND pm.pass = 2
                UNION ALL
-               SELECT NULL
-                 FROM hcrs.prfl_contr_prod_splt_pct_wrk_t pcpspw
-                WHERE pcpspw.dst_cls_of_trd_cd = pmw.cls_of_trd_cd
-              );
+               -- Add the matrix where the COT exists in Customer COT
+               SELECT /*+ NO_MERGE
+                      */
+                      z.cls_of_trd_cd,
+                      z.trans_typ_cd,
+                      z.cot_incl_ind,
+                      z.incl_ind,
+                      z.cot_grp_cd,
+                      z.trans_typ_grp_cd,
+                      z.cot_begn_dt,
+                      z.cot_end_dt,
+                      z.tt_begn_dt,
+                      z.tt_end_dt,
+                      z.uses_paid_dt,
+                      z.uses_earn_dt,
+                      z.uses_net_dsc,
+                      z.flag_no,
+                      z.pass
+                 FROM p1 z
+                WHERE z.pass = 2
+                  AND EXISTS
+                      (-- COT is in Customer COTs
+                        SELECT NULL
+                          FROM hcrs.prfl_cust_cls_of_trd_wrk_t pccotw
+                         WHERE pccotw.cls_of_trd_cd = z.cls_of_trd_cd
+                           AND pccotw.strt_dt <= z.cot_end_dt
+                           AND pccotw.end_dt >= z.cot_begn_dt
+                           AND pccotw.strt_dt <= z.tt_end_dt
+                           AND pccotw.end_dt >= z.tt_begn_dt
+                      )
+              ),
+              cb
+           AS (-- Combine pass 1 and 2
+               -- Pass 1
+               SELECT /*+ NO_MERGE
+                      */
+                      z.cls_of_trd_cd,
+                      z.trans_typ_cd,
+                      z.cot_incl_ind,
+                      z.incl_ind,
+                      z.cot_grp_cd,
+                      z.trans_typ_grp_cd,
+                      z.cot_begn_dt,
+                      z.cot_end_dt,
+                      z.tt_begn_dt,
+                      z.tt_end_dt,
+                      z.uses_paid_dt,
+                      z.uses_earn_dt,
+                      z.uses_net_dsc,
+                      -- Contants/Parameters
+                      z.flag_no
+                 FROM p1 z
+                WHERE z.pass = 1
+               UNION ALL
+               -- Pass 2
+               SELECT /*+ NO_MERGE
+                      */
+                      z.cls_of_trd_cd,
+                      z.trans_typ_cd,
+                      z.cot_incl_ind,
+                      z.incl_ind,
+                      z.cot_grp_cd,
+                      z.trans_typ_grp_cd,
+                      z.cot_begn_dt,
+                      z.cot_end_dt,
+                      z.tt_begn_dt,
+                      z.tt_end_dt,
+                      z.uses_paid_dt,
+                      z.uses_earn_dt,
+                      z.uses_net_dsc,
+                      -- Contants/Parameters
+                      z.flag_no
+                 FROM p2 z
+                WHERE z.pass = 2
+              )
+         SELECT /*+ NO_MERGE
+                */
+                z.cls_of_trd_cd,
+                z.trans_typ_cd,
+                z.cot_incl_ind,
+                z.incl_ind,
+                z.cot_grp_cd,
+                z.trans_typ_grp_cd,
+                z.cot_begn_dt,
+                z.cot_end_dt,
+                z.tt_begn_dt,
+                z.tt_end_dt,
+                -- If any line uses paid date, set to Y
+                NVL( MAX( z.uses_paid_dt), z.flag_no) uses_paid_dt,
+                -- If any line uses earn date, set to Y
+                NVL( MAX( z.uses_earn_dt), z.flag_no) uses_earn_dt,
+                -- If any line uses net discount, set to Y
+                NVL( MAX( z.uses_net_dsc), z.flag_no) uses_net_dsc
+           FROM cb z
+          GROUP BY z.cls_of_trd_cd,
+                   z.trans_typ_cd,
+                   z.cot_incl_ind,
+                   z.incl_ind,
+                   z.cot_grp_cd,
+                   z.trans_typ_grp_cd,
+                   z.cot_begn_dt,
+                   z.cot_end_dt,
+                   z.tt_begn_dt,
+                   z.tt_end_dt,
+                   z.flag_no
+          ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
    EXCEPTION
       WHEN OTHERS
       THEN
@@ -5671,9 +5745,48 @@ AS
       *   Date Created : 12/05/2007
       *         Author : Joe Kidd
       *    Description : Populates the split percentages working table
-      *                  Pass 1 - load all split percents
-      *                  Pass 2 - reload, limit by matrix, create original,
-      *                           reversal, reallocation rows for each percentage
+      *
+      *                  A Split Pct is included when:
+      *                  [P1] 1a. Either Src or Dst COT+TT is needed by
+      *                           Active Components
+      *                  [P2] 1b. AND Source Split Pct COT is in Customer COTs
+      *
+      *                  Before pass 1, the Matrix GTT is loaded.
+      *
+      *                  [P1] Pass 1:
+      *                  Load the Split Percentage GTT where either the source or
+      *                  destination COT-TT combination is in the Matrix GTT.
+      *
+      *                  There is no need to remap any COT/TT combinations where
+      *                  both the source and destination COT/TT combinations
+      *                  are not needed by components.
+      *
+      *                  Between pass 1 and 2, the Customer COT GTT is loaded.
+      *
+      *                  [P2] Pass 2:
+      *                  Reload the Split Percentage GTT where either the source
+      *                  or destination COT-TT combination is in the Matrix GTT
+      *                  and the source COT is in the Customer COT GTT.
+      *
+      *                  There is no need to remap any COT/TT combinations where
+      *                  both the source and destination COT/TT combinations
+      *                  are not needed by components, or the source COT is not
+      *                  assigned to any customers.
+      *
+      *                  Between pass 1 and 2, the Matrix GTT is reloaded.
+      *
+      *                  [P3] Pass 3:
+      *                  Reload the Split Percentage GTT where either the source
+      *                  or destination COT-TT combination is in the Matrix GTT
+      *                  and the source COT is in the Customer COT GTT.  Create
+      *                  three rows to reallocate the transaction, first row
+      *                  keeps original, second row reverses percentage, third
+      *                  row remaps the percentage to the new COT/TT.
+      *
+      *                  There is no need to remap any COT/TT combinations where
+      *                  both the source and destination COT/TT combinations
+      *                  are not needed by components, or the source COT is not
+      *                  assigned to any customers.
       *
       *                  NOTE: This procedure should only write to temporary
       *                  tables, so that it can be used during testing/debugging
@@ -5696,14 +5809,17 @@ AS
       *                            Populate working table instead of associative array
       *  03/01/2019  Joe Kidd      CHG-0137941: RITM-1096050: NonFAMP sub-PHS issue
       *                            Add normal exception handling (Calc Debug Mode)
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Matrix GTT now loaded in multiple passes
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_mk_splt_pct_wrk_t';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Populates the split percent working table';
       cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error while populating the split percent working table';
    BEGIN
-      -- Always delete because this is called twice, before and after the matrix
+      -- Always delete because this is called multiple times, once each for each pass
       DELETE FROM hcrs.prfl_contr_prod_splt_pct_wrk_t;
-      INSERT INTO hcrs.prfl_contr_prod_splt_pct_wrk_t
+      INSERT /*+ p_mk_splt_pct_wrk_t */
+        INTO hcrs.prfl_contr_prod_splt_pct_wrk_t
          (contr_id,
           ndc_lbl,
           ndc_prod,
@@ -5729,9 +5845,39 @@ AS
           dst_tt_begn_dt,
           dst_tt_end_dt,
           trans_adj_cd)
-         WITH z
-           AS (-- Get the split percentages
-               SELECT pcpsp.contr_id,
+         WITH pw
+           AS (-- Get the calc parameters and constants
+               SELECT /*+ NO_MERGE
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      ppw.prfl_id,
+                      ppw.co_id,
+                      ppw.calc_typ_cd,
+                      ppw.pri_whls_mthd_cd,
+                      NVL( ppw.min_earn_start_dt, ppw.begin_time) min_earn_start_dt,
+                      NVL( ppw.max_earn_end_dt, ppw.end_time) max_earn_end_dt,
+                      ppw.trans_ndc_lbl ndc_lbl,
+                      ppw.trans_ndc_prod ndc_prod,
+                      ppw.trans_ndc_pckg ndc_pckg,
+                      ppw.flag_yes,
+                      ppw.flag_no,
+                      ppw.begin_time,
+                      ppw.end_time,
+                      '' ch_null,
+                      TO_NUMBER( '') nm_null,
+                      TO_DATE( '', '') dt_null,
+                      pkg_constants.cs_trans_adj_estimate trans_adj_cd_est,
+                      i_pass pass
+                 FROM hcrs.prfl_prod_wrk_t ppw
+              ),
+              p1a
+           AS (-- PASS 1a: Get all split percentages
+               SELECT /*+ NO_MERGE
+                          LEADING( z psp pcpsp )
+                          USE_NL( z psp pcpsp )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      pcpsp.contr_id,
                       pcpsp.ndc_lbl,
                       pcpsp.ndc_prod,
                       pcpsp.ndc_pckg,
@@ -5741,45 +5887,61 @@ AS
                       psp.end_dt splt_end_dt,
                       pcpsp.strt_dt splt_pct_strt_dt,
                       pcpsp.end_dt splt_pct_end_dt,
+                      0 splt_pct_ord,
                       pcpsp.splt_pct_typ,
                       pcpsp.splt_pct,
                       pcpsp.splt_pct_seq_no,
                       psp.dst_cls_of_trd_cd,
                       psp.dst_trans_typ_cd,
-                      ppw.flag_no dst_cot_incl_ind,
-                      ppw.flag_no dst_cot_grp_cd,
-                      ppw.begin_time dst_cot_begn_dt,
-                      ppw.end_time dst_cot_end_dt,
-                      ppw.flag_no dst_tt_incl_ind,
-                      ppw.flag_no dst_tt_grp_cd,
-                      ppw.begin_time dst_tt_begn_dt,
-                      ppw.end_time dst_tt_end_dt
-                 FROM hcrs.prfl_prod_wrk_t ppw,
+                      -- Constants/parameters
+                      z.flag_yes,
+                      z.flag_no,
+                      z.begin_time,
+                      z.end_time,
+                      z.ch_null,
+                      z.nm_null,
+                      z.dt_null,
+                      z.trans_adj_cd_est,
+                      z.pass
+                 FROM pw z,
                       hcrs.prfl_splt_pct_t psp,
                       hcrs.prfl_contr_prod_splt_pct_t pcpsp
-                   -- PPW-PSP: Products to Split Percentage Mapping
-                WHERE ppw.prfl_id = psp.prfl_id
-                  AND ppw.co_id = psp.co_id
-                  AND ppw.calc_typ_cd = psp.calc_typ_cd
-                  AND ppw.pri_whls_mthd_cd = psp.pri_whls_mthd_cd
+                   -- Z-PSP: Products to Split Percentage Mapping
+                WHERE 1=1
+                  AND z.prfl_id = psp.prfl_id
+                  AND z.co_id = psp.co_id
+                  AND z.calc_typ_cd = psp.calc_typ_cd
+                  AND z.pri_whls_mthd_cd = psp.pri_whls_mthd_cd
+                   -- Exclude estimations not effective in calculation earn date range (if any)
+                  AND z.min_earn_start_dt <= psp.end_dt
+                  AND z.max_earn_end_dt >= psp.begn_dt
                    -- PPW-PCPSP: Products to Contract Product Split Percentages
-                  AND ppw.prfl_id = pcpsp.prfl_id
-                  AND ppw.co_id = pcpsp.co_id
-                  AND ppw.trans_ndc_lbl = pcpsp.ndc_lbl
-                  AND ppw.trans_ndc_prod = pcpsp.ndc_prod
-                  AND ppw.trans_ndc_pckg = pcpsp.ndc_pckg
+                  AND z.prfl_id = pcpsp.prfl_id
+                  AND z.co_id = pcpsp.co_id
+                  AND z.ndc_lbl = pcpsp.ndc_lbl
+                  AND z.ndc_prod = pcpsp.ndc_prod
+                  AND z.ndc_pckg = pcpsp.ndc_pckg
+                   -- Exclude estimations not effective in calculation earn date range (if any)
+                  AND z.min_earn_start_dt <= pcpsp.strt_dt
+                  AND z.max_earn_end_dt >= pcpsp.end_dt
                    -- PSP-PCPSP: Split Percentage Mapping to Contract Product Split Percentages
                   AND psp.prfl_id = pcpsp.prfl_id
                   AND psp.co_id = pcpsp.co_id
                   AND psp.splt_pct_typ = pcpsp.splt_pct_typ
                   -- Split percentage must be greater than zero
-                  -- and less than or equal to 1
+                  -- and less than or equal to one
                   AND pcpsp.splt_pct > 0
                   AND pcpsp.splt_pct <= 1
+                  AND ROWNUM > 0 -- materialize
               ),
-              y
-           AS (-- Limit by the matrix (skip if src and dst not in the matrix)
-               SELECT z.contr_id,
+              p1b
+           AS (-- PASS 1b: Outer Join Split Percentages Src and Dst COT-TT combos to the Matrix
+               SELECT /*+ NO_MERGE
+                          LEADING( z pmws pmwd )
+                          USE_HASH( z pmws pmwd )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      z.contr_id,
                       z.ndc_lbl,
                       z.ndc_prod,
                       z.ndc_pckg,
@@ -5789,31 +5951,160 @@ AS
                       z.splt_end_dt,
                       z.splt_pct_strt_dt,
                       z.splt_pct_end_dt,
+                      z.splt_pct_ord,
                       z.splt_pct_typ,
                       z.splt_pct,
                       z.splt_pct_seq_no,
                       z.dst_cls_of_trd_cd,
                       z.dst_trans_typ_cd,
-                      pmw.cot_incl_ind dst_cot_incl_ind,
-                      pmw.cot_grp_cd dst_cot_grp_cd,
-                      pmw.cot_begn_dt dst_cot_begn_dt,
-                      pmw.cot_end_dt dst_cot_end_dt,
-                      pmw.incl_ind dst_tt_incl_ind,
-                      pmw.trans_typ_grp_cd dst_tt_grp_cd,
-                      pmw.tt_begn_dt dst_tt_begn_dt,
-                      pmw.tt_end_dt dst_tt_end_dt
-                 FROM z,
-                      hcrs.prfl_mtrx_wrk_t pmw
-                WHERE z.dst_cls_of_trd_cd = pmw.cls_of_trd_cd
-                  AND z.dst_trans_typ_cd = pmw.trans_typ_cd
-                  AND z.splt_begn_dt <= pmw.cot_end_dt
-                  AND pmw.cot_begn_dt <= z.splt_end_dt
-                  AND z.splt_begn_dt <= pmw.tt_end_dt
-                  AND pmw.tt_begn_dt <= z.splt_end_dt
+                      -- Maybe null from Matrix in PASS 1 or 2, but will exist in PASS 3
+                      NVL( pmwd.cot_incl_ind, z.flag_no) dst_cot_incl_ind,
+                      NVL( pmwd.cot_grp_cd, z.flag_no) dst_cot_grp_cd,
+                      NVL( pmwd.cot_begn_dt, z.begin_time) dst_cot_begn_dt,
+                      NVL( pmwd.cot_end_dt, z.end_time) dst_cot_end_dt,
+                      NVL( pmwd.incl_ind, z.flag_no) dst_tt_incl_ind,
+                      NVL( pmwd.trans_typ_grp_cd, z.flag_no) dst_tt_grp_cd,
+                      NVL( pmwd.tt_begn_dt, z.begin_time) dst_tt_begn_dt,
+                      NVL( pmwd.tt_end_dt, z.end_time) dst_tt_end_dt,
+                      NVL( pmws.cot_begn_dt, z.begin_time) src_cot_begn_dt,
+                      NVL( pmws.cot_end_dt, z.end_time) src_cot_end_dt,
+                      NVL2( pmws.cls_of_trd_cd, z.flag_yes, z.flag_no) src_exists,
+                      NVL2( pmwd.cls_of_trd_cd, z.flag_yes, z.flag_no) dst_exists,
+                      -- Constants/parameters
+                      z.flag_yes,
+                      z.ch_null,
+                      z.nm_null,
+                      z.dt_null,
+                      z.trans_adj_cd_est,
+                      z.pass
+                 FROM p1a z,
+                      hcrs.prfl_mtrx_wrk_t pmws,
+                      hcrs.prfl_mtrx_wrk_t pmwd
+                WHERE z.src_cls_of_trd_cd = pmws.cls_of_trd_cd (+)
+                  AND z.src_trans_typ_cd = pmws.trans_typ_cd (+)
+                  AND z.splt_begn_dt <= pmws.cot_end_dt (+)
+                  AND z.splt_end_dt >= pmws.cot_begn_dt (+)
+                  AND z.splt_begn_dt <= pmws.tt_end_dt (+)
+                  AND z.splt_end_dt >= pmws.tt_begn_dt (+)
+                  AND z.splt_pct_strt_dt <= pmws.cot_end_dt (+)
+                  AND z.splt_pct_end_dt >= pmws.cot_begn_dt (+)
+                  AND z.splt_pct_strt_dt <= pmws.tt_end_dt (+)
+                  AND z.splt_pct_end_dt >= pmws.tt_begn_dt (+)
+                  AND z.dst_cls_of_trd_cd = pmwd.cls_of_trd_cd (+)
+                  AND z.dst_trans_typ_cd = pmwd.trans_typ_cd (+)
+                  AND z.splt_begn_dt <= pmwd.cot_end_dt (+)
+                  AND z.splt_end_dt >= pmwd.cot_begn_dt (+)
+                  AND z.splt_begn_dt <= pmwd.tt_end_dt (+)
+                  AND z.splt_end_dt >= pmwd.tt_begn_dt (+)
+                  AND z.splt_pct_strt_dt <= pmwd.cot_end_dt (+)
+                  AND z.splt_pct_end_dt >= pmwd.cot_begn_dt (+)
+                  AND z.splt_pct_strt_dt <= pmwd.tt_end_dt (+)
+                  AND z.splt_pct_end_dt >= pmwd.tt_begn_dt (+)
               ),
-              x
-           AS (-- Map source to source as 100% to keep original trans
-               SELECT z.contr_id,
+              p1
+           AS (-- PASS 1: Limit to Split Percentages either Src or Dst COT-TT combos is in the Matrix
+               SELECT /*+ NO_MERGE
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      z.contr_id,
+                      z.ndc_lbl,
+                      z.ndc_prod,
+                      z.ndc_pckg,
+                      z.src_cls_of_trd_cd,
+                      z.src_trans_typ_cd,
+                      z.splt_begn_dt,
+                      z.splt_end_dt,
+                      z.splt_pct_strt_dt,
+                      z.splt_pct_end_dt,
+                      z.splt_pct_ord,
+                      z.splt_pct_typ,
+                      z.splt_pct,
+                      z.splt_pct_seq_no,
+                      z.dst_cls_of_trd_cd,
+                      z.dst_trans_typ_cd,
+                      z.dst_cot_incl_ind,
+                      z.dst_cot_grp_cd,
+                      z.dst_cot_begn_dt,
+                      z.dst_cot_end_dt,
+                      z.dst_tt_incl_ind,
+                      z.dst_tt_grp_cd,
+                      z.dst_tt_begn_dt,
+                      z.dst_tt_end_dt,
+                      z.ch_null trans_adj_cd,
+                      z.src_cot_begn_dt,
+                      z.src_cot_end_dt,
+                      -- Constants/parameters
+                      z.ch_null,
+                      z.nm_null,
+                      z.dt_null,
+                      z.trans_adj_cd_est,
+                      z.pass
+                 FROM p1b z
+                WHERE z.src_exists = z.flag_yes
+                   OR z.dst_exists = z.flag_yes
+              ),
+              p2
+           AS (-- PASS 2: Limit to Split Percentages either Src or Dst COT-TTs are in the Matrix
+               --         AND Src COTs are in Customers
+               SELECT /*+ NO_MERGE
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      z.contr_id,
+                      z.ndc_lbl,
+                      z.ndc_prod,
+                      z.ndc_pckg,
+                      z.src_cls_of_trd_cd,
+                      z.src_trans_typ_cd,
+                      z.splt_begn_dt,
+                      z.splt_end_dt,
+                      z.splt_pct_strt_dt,
+                      z.splt_pct_end_dt,
+                      z.splt_pct_ord,
+                      z.splt_pct_typ,
+                      z.splt_pct,
+                      z.splt_pct_seq_no,
+                      z.dst_cls_of_trd_cd,
+                      z.dst_trans_typ_cd,
+                      z.dst_cot_incl_ind,
+                      z.dst_cot_grp_cd,
+                      z.dst_cot_begn_dt,
+                      z.dst_cot_end_dt,
+                      z.dst_tt_incl_ind,
+                      z.dst_tt_grp_cd,
+                      z.dst_tt_begn_dt,
+                      z.dst_tt_end_dt,
+                      z.trans_adj_cd,
+                      -- Constants/parameters
+                      z.ch_null,
+                      z.nm_null,
+                      z.dt_null,
+                      z.trans_adj_cd_est,
+                      z.pass
+                 FROM p1 z
+                WHERE z.pass >= 2
+                  AND EXISTS
+                      (-- Source COT is in Customers
+                        SELECT NULL
+                          FROM hcrs.prfl_cust_cls_of_trd_wrk_t pccotw
+                         WHERE pccotw.cls_of_trd_cd = z.src_cls_of_trd_cd
+                           AND pccotw.strt_dt <= z.splt_end_dt
+                           AND pccotw.end_dt >= z.splt_begn_dt
+                           AND pccotw.strt_dt <= z.splt_pct_end_dt
+                           AND pccotw.end_dt >= z.splt_pct_strt_dt
+                           AND pccotw.strt_dt <= z.src_cot_end_dt
+                           AND pccotw.end_dt >= z.splt_begn_dt
+                      )
+              ),
+              p3
+           AS (-- PASS 3: Limit to Split Percentages either Src or Dst COT-TTs are in the Matrix
+               --         AND Src COTs are in Customers
+               --         Create rows to reallocate the transactions, first row
+               --         keeps original, second row reverses percentage, third
+               --         row remaps the percentage to the new COT/TT
+               -- Map source to source as 100% to keep original trans
+               SELECT /*+ NO_MERGE
+                      */
+                      z.contr_id,
                       z.ndc_lbl,
                       z.ndc_prod,
                       z.ndc_pckg,
@@ -5824,24 +6115,28 @@ AS
                       z.splt_pct_strt_dt,
                       z.splt_pct_end_dt,
                       1 splt_pct_ord,
-                      '' splt_pct_typ,
+                      z.ch_null splt_pct_typ,
                       1 splt_pct,
-                      TO_NUMBER( NULL) splt_pct_seq_no,
-                      '' dst_cls_of_trd_cd,
-                      '' dst_trans_typ_cd,
-                      '' dst_cot_incl_ind,
-                      '' dst_cot_grp_cd,
-                      TO_DATE( NULL) dst_cot_begn_dt,
-                      TO_DATE( NULL) dst_cot_end_dt,
-                      '' dst_tt_incl_ind,
-                      '' dst_tt_grp_cd,
-                      TO_DATE( NULL) dst_tt_begn_dt,
-                      TO_DATE( NULL) dst_tt_end_dt,
-                      '' trans_adj_cd
-                 FROM y z
+                      z.nm_null splt_pct_seq_no,
+                      z.ch_null dst_cls_of_trd_cd,
+                      z.ch_null dst_trans_typ_cd,
+                      z.ch_null dst_cot_incl_ind,
+                      z.ch_null dst_cot_grp_cd,
+                      z.dt_null dst_cot_begn_dt,
+                      z.dt_null dst_cot_end_dt,
+                      z.ch_null dst_tt_incl_ind,
+                      z.ch_null dst_tt_grp_cd,
+                      z.dt_null dst_tt_begn_dt,
+                      z.dt_null dst_tt_end_dt,
+                      z.ch_null trans_adj_cd,
+                      z.pass
+                 FROM p2 z
+                WHERE z.pass = 3
                UNION ALL
-               -- Map source to source as negative % to reverse out
-               SELECT z.contr_id,
+               -- Map source to source to reverse out negative percentage
+               SELECT /*+ NO_MERGE
+                      */
+                      z.contr_id,
                       z.ndc_lbl,
                       z.ndc_prod,
                       z.ndc_pckg,
@@ -5855,21 +6150,25 @@ AS
                       z.splt_pct_typ,
                       z.splt_pct * -1 splt_pct,
                       z.splt_pct_seq_no,
-                      '' dst_cls_of_trd_cd,
-                      '' dst_trans_typ_cd,
-                      '' dst_cot_incl_ind,
-                      '' dst_cot_grp_cd,
-                      TO_DATE( NULL) dst_cot_begn_dt,
-                      TO_DATE( NULL) dst_cot_end_dt,
-                      '' dst_tt_incl_ind,
-                      '' dst_tt_grp_cd,
-                      TO_DATE( NULL) dst_tt_begn_dt,
-                      TO_DATE( NULL) dst_tt_end_dt,
-                      pkg_constants.cs_trans_adj_estimate trans_adj_cd
-                 FROM y z
+                      z.ch_null dst_cls_of_trd_cd,
+                      z.ch_null dst_trans_typ_cd,
+                      z.ch_null dst_cot_incl_ind,
+                      z.ch_null dst_cot_grp_cd,
+                      z.dt_null dst_cot_begn_dt,
+                      z.dt_null dst_cot_end_dt,
+                      z.ch_null dst_tt_incl_ind,
+                      z.ch_null dst_tt_grp_cd,
+                      z.dt_null dst_tt_begn_dt,
+                      z.dt_null dst_tt_end_dt,
+                      z.trans_adj_cd_est trans_adj_cd,
+                      z.pass
+                 FROM p2 z
+                WHERE z.pass = 3
                UNION ALL
-               -- Map source to destination as positive % to reallocate
-               SELECT z.contr_id,
+               -- Map source to destination to reallocate positive percentage
+               SELECT /*+ NO_MERGE
+                      */
+                      z.contr_id,
                       z.ndc_lbl,
                       z.ndc_prod,
                       z.ndc_pckg,
@@ -5893,41 +6192,15 @@ AS
                       z.dst_tt_grp_cd,
                       z.dst_tt_begn_dt,
                       z.dst_tt_end_dt,
-                      '' trans_adj_cd
-                 FROM y z
+                      z.ch_null trans_adj_cd,
+                      z.pass
+                 FROM p2 z
+                WHERE z.pass = 3
               )
-         -- Pass 1 - load all split percents
-         SELECT z.contr_id,
-                z.ndc_lbl,
-                z.ndc_prod,
-                z.ndc_pckg,
-                z.src_cls_of_trd_cd,
-                z.src_trans_typ_cd,
-                z.splt_begn_dt,
-                z.splt_end_dt,
-                z.splt_pct_strt_dt,
-                z.splt_pct_end_dt,
-                0 splt_pct_ord,
-                z.splt_pct_typ,
-                z.splt_pct,
-                z.splt_pct_seq_no,
-                z.dst_cls_of_trd_cd,
-                z.dst_trans_typ_cd,
-                z.dst_cot_incl_ind,
-                z.dst_cot_grp_cd,
-                z.dst_cot_begn_dt,
-                z.dst_cot_end_dt,
-                z.dst_tt_incl_ind,
-                z.dst_tt_grp_cd,
-                z.dst_tt_begn_dt,
-                z.dst_tt_end_dt,
-                '' trans_adj_cd
-           FROM z
-          WHERE i_pass = 1
-         UNION ALL
-         -- Pass 2 - reload, limit by matrix, create original, reversal,
-         --          reallocation rows for each percentage
-         SELECT z.contr_id,
+         -- Pass 1
+         SELECT /*+ NO_MERGE
+                */
+                z.contr_id,
                 z.ndc_lbl,
                 z.ndc_prod,
                 z.ndc_pckg,
@@ -5952,15 +6225,430 @@ AS
                 z.dst_tt_begn_dt,
                 z.dst_tt_end_dt,
                 z.trans_adj_cd
-           FROM x z
-          WHERE i_pass = 2
-          ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
+           FROM p1 z
+          WHERE z.pass = 1
+         UNION ALL
+         -- Pass 2
+         SELECT /*+ NO_MERGE
+                */
+                z.contr_id,
+                z.ndc_lbl,
+                z.ndc_prod,
+                z.ndc_pckg,
+                z.src_cls_of_trd_cd,
+                z.src_trans_typ_cd,
+                z.splt_begn_dt,
+                z.splt_end_dt,
+                z.splt_pct_strt_dt,
+                z.splt_pct_end_dt,
+                z.splt_pct_ord,
+                z.splt_pct_typ,
+                z.splt_pct,
+                z.splt_pct_seq_no,
+                z.dst_cls_of_trd_cd,
+                z.dst_trans_typ_cd,
+                z.dst_cot_incl_ind,
+                z.dst_cot_grp_cd,
+                z.dst_cot_begn_dt,
+                z.dst_cot_end_dt,
+                z.dst_tt_incl_ind,
+                z.dst_tt_grp_cd,
+                z.dst_tt_begn_dt,
+                z.dst_tt_end_dt,
+                z.trans_adj_cd
+           FROM p2 z
+          WHERE z.pass = 2
+         UNION ALL
+         -- Pass 3
+         SELECT /*+ NO_MERGE
+                */
+                z.contr_id,
+                z.ndc_lbl,
+                z.ndc_prod,
+                z.ndc_pckg,
+                z.src_cls_of_trd_cd,
+                z.src_trans_typ_cd,
+                z.splt_begn_dt,
+                z.splt_end_dt,
+                z.splt_pct_strt_dt,
+                z.splt_pct_end_dt,
+                z.splt_pct_ord,
+                z.splt_pct_typ,
+                z.splt_pct,
+                z.splt_pct_seq_no,
+                z.dst_cls_of_trd_cd,
+                z.dst_trans_typ_cd,
+                z.dst_cot_incl_ind,
+                z.dst_cot_grp_cd,
+                z.dst_cot_begn_dt,
+                z.dst_cot_end_dt,
+                z.dst_tt_incl_ind,
+                z.dst_tt_grp_cd,
+                z.dst_tt_begn_dt,
+                z.dst_tt_end_dt,
+                z.trans_adj_cd
+           FROM p3 z
+          WHERE z.pass = 3
+          ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11;
    EXCEPTION
       WHEN OTHERS
       THEN
          p_raise_errors( cs_src_cd, cs_src_descr, SQLCODE, SQLERRM,
             'Fatal ' || cs_cmt_txt);
    END p_mk_splt_pct_wrk_t;
+
+
+   PROCEDURE p_mk_cust_cls_of_trd_wrk_t
+   IS
+      /*************************************************************************
+      * Procedure Name : p_mk_cust_cls_of_trd_wrk_t
+      *   Input params : None
+      *  Output params : None
+      *        Returns : None
+      *   Date Created : 08/01/2020
+      *         Author : Joe Kidd
+      *    Description : Populate customer COT working table (GTT)
+      *
+      *                  A Customer COT is included when
+      *                  1. Needed by Active Components
+      *                     OR
+      *                  2. Needed by Source Split Pct COT
+      *
+      *                  Before this is excuted, the Matrix GTT and the Split
+      *                  Percentage GTTs are loaded.
+      *
+      *                  Load Customer COT GTT with customers with a COT that
+      *                  is in the matrix GTT or is a Source COT in the Split
+      *                  Percents GTT, and the customer's location is used by
+      *                  the components.
+      *
+      *                  There is no need to load a customer that has a COT
+      *                  and/or customer location that is not required for the
+      *                  components or does not need to be remapped by the
+      *                  Split Percentages.
+      *
+      *                  After this is executed, the Matrix GTT and the Split
+      *                  Percentage GTTs are reloaded.
+      *
+      *                  NOTE: This procedure should only write to temporary
+      *                  tables, so that it can be used during testing/debugging
+      *                  in production.  No changes should be made to permanent
+      *                  objects.  Make those changes in p_common_initialize.
+      *
+      * MOD HISTORY
+      *  Date        Modified by   Reason
+      *  ----------  ------------  ---------------------------------------------
+      *************************************************************************/
+      cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_mk_cust_cls_of_trd_wrk_t';
+      cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Populates the customer class of trade working table';
+      cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error while populating the customer class of trade working table';
+   BEGIN
+      INSERT /*+ p_mk_cust_cls_of_trd_wrk_t */
+        INTO hcrs.prfl_cust_cls_of_trd_wrk_t
+         (cust_id,
+          strt_dt,
+          end_dt,
+          cls_of_trd_cd,
+          cust_loc_cd)
+         WITH pw
+           AS (-- Get the calc parameters and constants
+               SELECT /*+ NO_MERGE
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      ppw.prfl_id,
+                      ppw.co_id,
+                      ppw.flag_yes,
+                      ppw.tt_indirect_sales,
+                      pkg_constants.cs_cust_loc_cd_mode_cust cust_loc_cd_mode_cust
+                 FROM hcrs.prfl_prod_wrk_t ppw
+                WHERE ppw.calc_min_ndc = ppw.flag_yes
+              ),
+              cd0
+           AS (-- Get the COT supergroups and locations for active Components
+               -- Customers
+               SELECT /*+ NO_MERGE
+                          LEADING( z ppccdw )
+                          USE_HASH( z ppccdw )
+                          FULL( ppccdw )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      z.prfl_id,
+                      z.co_id,
+                      ppccdw.cust_cot_grp_cd,
+                      ppccdw.cust_loc_cd_list,
+                      z.cust_loc_cd_mode_cust
+                 FROM pw z,
+                      hcrs.prfl_prod_calc_comp_def2_wrk_t ppccdw
+                WHERE z.flag_yes = ppccdw.active_ind
+               UNION -- Does DISTINCT
+               -- Wholesalers
+               SELECT /*+ NO_MERGE
+                          LEADING( z ppccdw )
+                          USE_HASH( z ppccdw )
+                          FULL( ppccdw )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      z.prfl_id,
+                      z.co_id,
+                      ppccdw.whls_cot_grp_cd cust_cot_grp_cd,
+                      ppccdw.whls_loc_cd_list cust_loc_cd_list,
+                      z.cust_loc_cd_mode_cust
+                 FROM pw z,
+                      hcrs.prfl_prod_calc_comp_def2_wrk_t ppccdw
+                WHERE z.flag_yes = ppccdw.active_ind
+                  AND z.tt_indirect_sales = ppccdw.trans_typ_grp_cd
+              ),
+              cd
+           AS (-- Convert COT supergroups to COTs, with locations for active Components
+               SELECT /*+ NO_MERGE
+                          LEADING( z pmw )
+                          USE_HASH( z pmw )
+                          FULL( pmw )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      DISTINCT
+                      z.prfl_id,
+                      z.co_id,
+                      pmw.cls_of_trd_cd,
+                      z.cust_loc_cd_list,
+                      z.cust_loc_cd_mode_cust,
+                      pmw.cot_begn_dt,
+                      pmw.cot_end_dt,
+                      pmw.tt_begn_dt,
+                      pmw.tt_end_dt
+                 FROM cd0 z,
+                      hcrs.prfl_mtrx_wrk_t pmw
+                WHERE z.cust_cot_grp_cd = pmw.cot_grp_cd
+              ),
+              sp
+           AS (-- Get Source COTs from Split Percentage definitions
+               -- Add locations from component list to COTs, using destination as a fallback
+               SELECT /*+ NO_MERGE
+                          LEADING( z sp0 scd dcd )
+                          USE_HASH( z sp0 scd dcd )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      z.prfl_id,
+                      z.co_id,
+                      pcpspw.src_cls_of_trd_cd cls_of_trd_cd,
+                      -- If source is not in matrix, use location of destination
+                      NVL( scd.cust_loc_cd_list, dcd.cust_loc_cd_list) cust_loc_cd_list,
+                      z.cust_loc_cd_mode_cust,
+                      NVL( scd.cot_begn_dt, dcd.cot_begn_dt) cot_begn_dt,
+                      NVL( scd.cot_end_dt, dcd.cot_end_dt) cot_end_dt,
+                      pcpspw.splt_begn_dt,
+                      pcpspw.splt_end_dt,
+                      pcpspw.splt_pct_strt_dt,
+                      pcpspw.splt_pct_end_dt
+                 FROM pw z,
+                      hcrs.prfl_contr_prod_splt_pct_wrk_t pcpspw,
+                      cd scd,
+                      cd dcd
+                   -- Source COT
+                WHERE pcpspw.src_cls_of_trd_cd = scd.cls_of_trd_cd (+)
+                  AND pcpspw.splt_begn_dt <= scd.cot_end_dt (+)
+                  AND pcpspw.splt_end_dt >= scd.cot_begn_dt (+)
+                  AND pcpspw.splt_pct_strt_dt <= scd.cot_end_dt (+)
+                  AND pcpspw.splt_pct_end_dt >= scd.cot_begn_dt (+)
+                  AND pcpspw.splt_begn_dt <= scd.tt_end_dt (+)
+                  AND pcpspw.splt_end_dt >= scd.tt_begn_dt (+)
+                  AND pcpspw.splt_pct_strt_dt <= scd.tt_end_dt (+)
+                  AND pcpspw.splt_pct_end_dt >= scd.tt_begn_dt (+)
+                   -- Destination COT
+                  AND pcpspw.dst_cls_of_trd_cd = dcd.cls_of_trd_cd (+)
+                  AND pcpspw.splt_begn_dt <= dcd.cot_end_dt (+)
+                  AND pcpspw.splt_end_dt >= dcd.cot_begn_dt (+)
+                  AND pcpspw.splt_pct_strt_dt <= dcd.cot_end_dt (+)
+                  AND pcpspw.splt_pct_end_dt >= dcd.cot_begn_dt (+)
+                  AND pcpspw.splt_begn_dt <= dcd.tt_end_dt (+)
+                  AND pcpspw.splt_end_dt >= dcd.tt_begn_dt (+)
+                  AND pcpspw.splt_pct_strt_dt <= dcd.tt_end_dt (+)
+                  AND pcpspw.splt_pct_end_dt >= dcd.tt_begn_dt (+)
+              ),
+              cot0
+           AS (-- Combine Component COT list with Split Pct COT list
+               -- Component COTs
+               SELECT /*+ NO_MERGE
+                      */
+                      z.prfl_id,
+                      z.co_id,
+                      z.cls_of_trd_cd,
+                      z.cust_loc_cd_list,
+                      z.cust_loc_cd_mode_cust,
+                      z.cot_begn_dt,
+                      z.cot_end_dt,
+                      -- COTs required by Components always in effect
+                      z.cot_begn_dt splt_begn_dt,
+                      z.cot_end_dt splt_end_dt,
+                      z.cot_begn_dt splt_pct_strt_dt,
+                      z.cot_end_dt splt_pct_end_dt
+                 FROM cd z
+               UNION -- Does DISTINCT
+               -- Split Pct COTs
+               SELECT /*+ NO_MERGE
+                      */
+                      z.prfl_id,
+                      z.co_id,
+                      z.cls_of_trd_cd,
+                      z.cust_loc_cd_list,
+                      z.cust_loc_cd_mode_cust,
+                      z.cot_begn_dt,
+                      z.cot_end_dt,
+                      -- COTs required by Split Percentages use their own dates
+                      z.splt_begn_dt,
+                      z.splt_end_dt,
+                      z.splt_pct_strt_dt,
+                      z.splt_pct_end_dt
+                 FROM sp z
+              ),
+              cot
+           AS (-- Get min/max date ranges for each COT
+               SELECT /*+ NO_MERGE
+                      */
+                      z.prfl_id,
+                      z.co_id,
+                      z.cls_of_trd_cd,
+                      z.cust_loc_cd_list,
+                      z.cust_loc_cd_mode_cust,
+                      MIN( z.cot_begn_dt) cot_begn_dt,
+                      MAX( z.cot_end_dt) cot_end_dt,
+                      MIN( z.splt_begn_dt) splt_begn_dt,
+                      MAX( z.splt_end_dt) splt_end_dt,
+                      MIN( z.splt_pct_strt_dt) splt_pct_strt_dt,
+                      MAX( z.splt_pct_end_dt) splt_pct_end_dt
+                 FROM cot0 z
+                GROUP BY z.prfl_id,
+                         z.co_id,
+                         z.cls_of_trd_cd,
+                         z.cust_loc_cd_list,
+                         z.cust_loc_cd_mode_cust
+              ),
+              ccot0
+           AS (-- Get the Customers for the COTs for active Components with locations
+               SELECT /*+ NO_MERGE
+                          LEADING( z pccot )
+                          USE_NL( z pccot )
+                          INDEX( pccot prfl_cust_cls_of_trd_ix2 )
+                          DYNAMIC_SAMPLING( 0 )
+                      */
+                      pccot.cust_id,
+                      pccot.strt_dt,
+                      pccot.end_dt,
+                      pccot.cls_of_trd_cd,
+                      -- Get customer location code
+                      (SELECT hcrs.pkg_common_procedures.f_get_cust_loc_cd_list
+                                 (z.cust_loc_cd_mode_cust,
+                                  pccot.domestic_ind,
+                                  pccot.territory_ind) cust_loc_cd
+                         FROM dual) cust_loc_cd,
+                      z.cust_loc_cd_list
+                 FROM cot z,
+                      hcrs.prfl_cust_cls_of_trd_t pccot
+                WHERE z.prfl_id = pccot.prfl_id
+                  AND z.co_id = pccot.co_id
+                  AND z.cls_of_trd_cd = pccot.cls_of_trd_cd
+                  AND z.cot_begn_dt <= pccot.end_dt
+                  AND z.cot_end_dt >= pccot.strt_dt
+                  AND z.splt_begn_dt <= pccot.end_dt
+                  AND z.splt_end_dt >= pccot.strt_dt
+                  AND z.splt_pct_strt_dt <= pccot.end_dt
+                  AND z.splt_pct_end_dt >= pccot.strt_dt
+              ),
+              ccot
+           AS (-- Remove customers with wrong locations for COT
+               SELECT /*+ NO_MERGE
+                      */
+                      z.cust_id,
+                      z.strt_dt,
+                      z.end_dt,
+                      z.cls_of_trd_cd,
+                      z.cust_loc_cd
+                 FROM ccot0 z
+                WHERE NVL( z.cust_loc_cd_list, z.cust_loc_cd) LIKE '%' || z.cust_loc_cd || '%'
+              ),
+              dt0
+           AS (-- Collapse contigous/overlapping date ranges: Analyze the dates on the key
+               SELECT /*+ NO_MERGE
+                      */
+                      z.cust_id,
+                      z.strt_dt,
+                      z.end_dt,
+                      z.cls_of_trd_cd,
+                      -- Get the end date of the previous row partitioned by the key, ordered by the start date, end date
+                      LAG( z.end_dt)
+                         OVER (PARTITION BY z.cust_id,
+                                            z.cls_of_trd_cd
+                                   ORDER BY z.strt_dt,
+                                            z.end_dt) + 1 prev_end_dt,
+                      -- Get the row number partitioned by the key, ordered by the start date, end date
+                      ROW_NUMBER()
+                         OVER (PARTITION BY z.cust_id,
+                                            z.cls_of_trd_cd
+                                   ORDER BY z.strt_dt,
+                                            z.end_dt) row_num,
+                      z.cust_loc_cd
+                 FROM ccot z
+              ),
+              dt1
+           AS (-- Collapse contigous/overlapping date ranges: Mark non-contiguous rows
+               SELECT /*+ NO_MERGE
+                      */
+                      z.cust_id,
+                      z.strt_dt,
+                      z.end_dt,
+                      z.cls_of_trd_cd,
+                      z.prev_end_dt,
+                      z.row_num,
+                      CASE
+                         -- Row is non-contiguous/non-overlapping
+                         WHEN z.prev_end_dt IS NULL
+                           OR z.strt_dt > z.prev_end_dt
+                         THEN z.row_num
+                         -- Row is contiguous/overlapping
+                         ELSE 0
+                      END mk_num,
+                      z.cust_loc_cd
+                 FROM dt0 z
+              ),
+              dt
+           AS (-- Collapse contigous/overlapping date ranges: Mark contiguous rows with the same group number
+               SELECT /*+ NO_MERGE
+                      */
+                      z.cust_id,
+                      z.strt_dt,
+                      z.end_dt,
+                      z.cls_of_trd_cd,
+                      z.prev_end_dt,
+                      z.row_num,
+                      z.mk_num,
+                      MAX( z.mk_num)
+                         OVER (PARTITION BY z.cust_id,
+                                            z.cls_of_trd_cd
+                                   ORDER BY z.strt_dt,
+                                            z.end_dt) mk_grp,
+                      z.cust_loc_cd
+                 FROM dt1 z
+              )
+         -- Collapse contigous date ranges
+         SELECT /*+ NO_MERGE
+                */
+                z.cust_id,
+                MIN( z.strt_dt) strt_dt,
+                MAX( z.end_dt) end_dt,
+                z.cls_of_trd_cd,
+                z.cust_loc_cd
+           FROM dt z
+          GROUP BY z.cust_id,
+                   z.cls_of_trd_cd,
+                   z.cust_loc_cd,
+                   z.mk_grp
+          ORDER BY 1, 2;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         p_raise_errors( cs_src_cd, cs_src_descr, SQLCODE, SQLERRM,
+            'Fatal ' || cs_cmt_txt);
+   END p_mk_cust_cls_of_trd_wrk_t;
 
 
    FUNCTION f_mk_bndl_dts
@@ -7330,6 +8018,8 @@ AS
       *  03/01/2019  Joe Kidd      CHG-0137941: RITM-1096050: NonFAMP sub-PHS issue
       *                            Correct Nominal/sub-PHS enable/disable
       *                            Add normal exception handling (Calc Debug Mode)
+      *  08/01/2020  Joe Kidd      RITM-2009820: GPO Custom Group Bundling Changes
+      *                            Matrix GTT now loaded in multiple passes
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_mk_mtrx_splt_bndl_wrk_t';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Populates matrix, split, and bundle working tables';
@@ -7372,17 +8062,29 @@ AS
          --------------------------------------------------------------------
          p_clear_wrk_t( 1);
          --------------------------------------------------------------------
+         -- Populate Matrix work table (pass 1)
+         --------------------------------------------------------------------
+         p_mk_mtrx_wrk_t( 1);
+         --------------------------------------------------------------------
          -- Populate Split Percentages working table (pass 1)
          --------------------------------------------------------------------
          p_mk_splt_pct_wrk_t( 1);
          --------------------------------------------------------------------
-         -- Populate Matrix work table
+         -- Populate Customer Class of Trade working table
          --------------------------------------------------------------------
-         p_mk_mtrx_wrk_t;
+         p_mk_cust_cls_of_trd_wrk_t();
          --------------------------------------------------------------------
-         -- Populate Split Percentages working table (pass 2)
+         -- Repopulate Split Percentages working table (pass 2)
          --------------------------------------------------------------------
          p_mk_splt_pct_wrk_t( 2);
+         --------------------------------------------------------------------
+         -- Repopulate Matrix work table (pass 2)
+         --------------------------------------------------------------------
+         p_mk_mtrx_wrk_t( 2);
+         --------------------------------------------------------------------
+         -- Repopulate Split Percentages working table (pass 3)
+         --------------------------------------------------------------------
+         p_mk_splt_pct_wrk_t( 3);
          --------------------------------------------------------------------
          -- Populate Contracts working table
          --------------------------------------------------------------------
@@ -8304,6 +9006,8 @@ AS
       *                            Delete all tables in commit loop, reduce code
       *                            Clean up logging and longops handling
       *                            Remove unneeded pkg_constants global variables
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Fix long ops display, add session client info
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_calc_delete';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Deletes calculations for the profile';
@@ -8326,10 +9030,12 @@ AS
       v_commit              NUMBER;
       v_module_name         hcrs.pkg_utils.gv_module_name%TYPE;
       v_action_name         hcrs.pkg_utils.gv_action_name%TYPE;
+      v_client_info         hcrs.pkg_utils.gv_client_info%TYPE;
       v_user_msg            hcrs.prfl_prod_t.user_msg_txt%TYPE;
       v_user_msg_tbl        hcrs.prfl_prod_t.user_msg_txt%TYPE;
       v_user_msg_row        hcrs.prfl_prod_t.user_msg_txt%TYPE;
       v_comp_typ_cd         hcrs.prfl_prod_calc_log_t.comp_typ_cd%TYPE;
+      v_null_param_rec      t_calc_param_rec;
 
       PROCEDURE p_row
          (i_action_name  IN  hcrs.pkg_utils.gv_action_name%TYPE,
@@ -8339,6 +9045,7 @@ AS
           i_row_done     IN  NUMBER,
           i_row_total    IN  NUMBER,
           i_row_count    IN  NUMBER,
+          i_min_count    IN  NUMBER,
           o_row_done     OUT NUMBER,
           o_row_total    OUT NUMBER,
           o_row_count    OUT NUMBER)
@@ -8370,9 +9077,12 @@ AS
             -- Only commit when work was done
             p_commit( o_row_count);
          END IF;
-         v_user_msg_row := ', ' || TO_CHAR( o_row_done, cs_calc_log_fmt_num) || ' of ' || TO_CHAR( o_row_total, cs_calc_log_fmt_num) || ' rows';
-         p_set_cntr( cs_calc_log_cntr_tbl_rows, o_row_done, o_row_total, i_tbl_abbr);
-         p_calc_log( i_action_name || i_tbl_abbr || ' ' || o_row_done, i_user_msg || i_user_msg_tbl || v_user_msg_row, i_tbl_abbr);
+         IF o_row_total >= i_min_count
+         THEN
+            v_user_msg_row := ', ' || TO_CHAR( o_row_done, cs_calc_log_fmt_num) || ' of ' || TO_CHAR( o_row_total, cs_calc_log_fmt_num) || ' rows';
+            p_set_cntr( cs_calc_log_cntr_tbl_rows, o_row_done, o_row_total, i_tbl_abbr);
+            p_calc_log( i_action_name || i_tbl_abbr || ' ' || o_row_done, i_user_msg || i_user_msg_tbl || v_user_msg_row, i_tbl_abbr);
+         END IF;
       END p_row;
 
       PROCEDURE p_tbl
@@ -8395,6 +9105,7 @@ AS
          o_tbl_abbr := i_tbl_abbr;
          o_tbl_done := i_tbl_done + (i_tbls_per_ndc * (i_cntr - 1));
          o_user_msg_tbl := ' table ' || TO_CHAR( o_tbl_done, cs_calc_log_fmt_num) || ' of ' || TO_CHAR( i_tbl_total, cs_calc_log_fmt_num);
+         gv_calc_log_client_info := i_tbl_name;
          -- Update the table counter
          p_set_cntr( cs_calc_log_cntr_tbls, o_tbl_done, i_tbl_total, i_comp_typ_cd);
          p_calc_log( v_action_name || o_tbl_abbr, i_user_msg || o_user_msg_tbl, i_comp_typ_cd);
@@ -8404,16 +9115,27 @@ AS
       -- Set calc delete runnning status to ON
       gv_calc_delete_running := TRUE;
       pkg_utils.p_appinfo_stk_push;
-      -- Get the product calculation from the parameter record, otherwise from globals
-      v_prfl_id := NVL( gv_param_rec.prfl_id, pkg_constants.var_prfl_id);
+      -- If the calc is not running, set the parameter record
+      IF NOT f_is_calc_running()
+      THEN
+         gv_param_rec.prfl_id := pkg_constants.var_prfl_id;
+         gv_param_rec.ndc_lbl := pkg_constants.var_ndc_lbl;
+         gv_param_rec.ndc_prod := pkg_constants.var_ndc_prod;
+         gv_param_rec.ndc_pckg := pkg_constants.var_ndc_pckg;
+         gv_param_rec.calc_typ_cd := pkg_constants.var_calc_typ_cd;
+      END IF;
+      -- Get the product calculation from the parameter record
+      v_prfl_id := gv_param_rec.prfl_id;
       v_co_id := gv_param_rec.co_id;
-      v_ndc_lbl := NVL( gv_param_rec.ndc_lbl, pkg_constants.var_ndc_lbl);
-      v_ndc_prod := NVL( gv_param_rec.ndc_prod, pkg_constants.var_ndc_prod);
-      v_ndc_pckg := NVL( gv_param_rec.ndc_pckg, pkg_constants.var_ndc_pckg);
-      v_calc_typ_cd := NVL( gv_param_rec.calc_typ_cd, pkg_constants.var_calc_typ_cd);
+      v_ndc_lbl := gv_param_rec.ndc_lbl;
+      v_ndc_prod := gv_param_rec.ndc_prod;
+      v_ndc_pckg := gv_param_rec.ndc_pckg;
+      v_calc_typ_cd := gv_param_rec.calc_typ_cd;
       -- Set the module name
       v_module_name := gv_calc_log_module_name;
+      v_client_info := gv_calc_log_client_info;
       gv_calc_log_module_name := f_get_calc_module( v_prfl_id, v_ndc_lbl, v_ndc_prod, v_ndc_pckg, v_calc_typ_cd);
+      gv_calc_log_client_info := '';
       -- Set number of tables that will be deleted
       v_tbls_per_ndc := 15;
       -- Increase commit point
@@ -8487,7 +9209,7 @@ AS
                AND ppct.ndc_prod = v_prod.ndc_prod
                AND ppct.ndc_pckg = v_prod.ndc_pckg
                AND ppct.calc_typ_cd = v_prod.calc_typ_cd;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8499,7 +9221,7 @@ AS
                   AND ppct.ndc_pckg = v_prod.ndc_pckg
                   AND ppct.calc_typ_cd = v_prod.calc_typ_cd
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
          ELSE
             -----------------------------------------------------------------------
@@ -8512,7 +9234,7 @@ AS
                AND ppfct.ndc_lbl = v_prod.ndc_lbl
                AND ppfct.ndc_prod = v_prod.ndc_prod
                AND ppfct.calc_typ_cd = v_prod.calc_typ_cd;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8523,7 +9245,7 @@ AS
                   AND ppfct.ndc_prod = v_prod.ndc_prod
                   AND ppfct.calc_typ_cd = v_prod.calc_typ_cd
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
          END IF;
          IF v_prod.calc_typ_cd = pkg_constants.cs_calc_typ_bp_cd
@@ -8538,7 +9260,7 @@ AS
                AND bptd.ndc_lbl = v_prod.ndc_lbl
                AND bptd.ndc_prod = v_prod.ndc_prod
                AND bptd.calc_typ_cd = v_prod.calc_typ_cd;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8549,7 +9271,7 @@ AS
                   AND bptd.ndc_prod = v_prod.ndc_prod
                   AND bptd.calc_typ_cd = v_prod.calc_typ_cd
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
             -----------------------------------------------------------------------
             -- BP price point table
@@ -8560,7 +9282,7 @@ AS
              WHERE ppbp.prfl_id = v_prod.prfl_id
                AND ppbp.ndc_lbl = v_prod.ndc_lbl
                AND ppbp.ndc_prod = v_prod.ndc_prod;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8570,7 +9292,7 @@ AS
                   AND ppbp.ndc_lbl = v_prod.ndc_lbl
                   AND ppbp.ndc_prod = v_prod.ndc_prod
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
          END IF;
          -----------------------------------------------------------------------
@@ -8585,7 +9307,7 @@ AS
             AND ppbct.ndc_prod = v_prod.ndc_prod
             AND ppbct.ndc_pckg = NVL( v_prod.ndc_pckg, ppbct.ndc_pckg)
             AND ppbct.calc_typ_cd = v_prod.calc_typ_cd;
-         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
          WHILE  v_row_total > 0
             AND v_row_count = v_commit
          LOOP
@@ -8598,7 +9320,7 @@ AS
                AND ppbct.ndc_pckg = NVL( v_prod.ndc_pckg, ppbct.ndc_pckg)
                AND ppbct.calc_typ_cd = v_prod.calc_typ_cd
                AND ROWNUM <= v_commit;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
          END LOOP;
          -----------------------------------------------------------------------
          -- Bundle Summary table
@@ -8612,7 +9334,7 @@ AS
             AND ppbs.ndc_prod = v_prod.ndc_prod
             AND ppbs.ndc_pckg = NVL( v_prod.ndc_pckg, ppbs.ndc_pckg)
             AND ppbs.calc_typ_cd = v_prod.calc_typ_cd;
-         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
          WHILE  v_row_total > 0
             AND v_row_count = v_commit
          LOOP
@@ -8625,7 +9347,7 @@ AS
                AND ppbs.ndc_pckg = NVL( v_prod.ndc_pckg, ppbs.ndc_pckg)
                AND ppbs.calc_typ_cd = v_prod.calc_typ_cd
                AND ROWNUM <= v_commit;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
          END LOOP;
          -----------------------------------------------------------------------
          -- Bundle Dates table
@@ -8639,7 +9361,7 @@ AS
             AND ppbd.ndc_prod = v_prod.ndc_prod
             AND ppbd.ndc_pckg = NVL( v_prod.ndc_pckg, ppbd.ndc_pckg)
             AND ppbd.calc_typ_cd = v_prod.calc_typ_cd;
-         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
          WHILE  v_row_total > 0
             AND v_row_count = v_commit
          LOOP
@@ -8652,7 +9374,7 @@ AS
                AND ppbd.ndc_pckg = NVL( v_prod.ndc_pckg, ppbd.ndc_pckg)
                AND ppbd.calc_typ_cd = v_prod.calc_typ_cd
                AND ROWNUM <= v_commit;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
          END LOOP;
          -----------------------------------------------------------------------
          -- Calc Component Defintion table
@@ -8666,7 +9388,7 @@ AS
             AND ppccd.ndc_prod = v_prod.ndc_prod
             AND ppccd.ndc_pckg = NVL( v_prod.ndc_pckg, ppccd.ndc_pckg)
             AND ppccd.calc_typ_cd = v_prod.calc_typ_cd;
-         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
          WHILE  v_row_total > 0
             AND v_row_count = v_commit
          LOOP
@@ -8679,7 +9401,7 @@ AS
                AND ppccd.ndc_pckg = NVL( v_prod.ndc_pckg, ppccd.ndc_pckg)
                AND ppccd.calc_typ_cd = v_prod.calc_typ_cd
                AND ROWNUM <= v_commit;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
          END LOOP;
          -----------------------------------------------------------------------
          -- Product Price table
@@ -8692,7 +9414,7 @@ AS
             AND ppp.ndc_lbl = v_prod.ndc_lbl
             AND ppp.ndc_prod = v_prod.ndc_prod
             AND ppp.ndc_pckg = NVL( v_prod.ndc_pckg, ppp.ndc_pckg);
-         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
          WHILE  v_row_total > 0
             AND v_row_count = v_commit
          LOOP
@@ -8704,7 +9426,7 @@ AS
                AND ppp.ndc_prod = v_prod.ndc_prod
                AND ppp.ndc_pckg = NVL( v_prod.ndc_pckg, ppp.ndc_pckg)
                AND ROWNUM <= v_commit;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
          END LOOP;
          -----------------------------------------------------------------------
          -- NDC11 component table
@@ -8717,7 +9439,7 @@ AS
             AND ppc.ndc_lbl = v_prod.ndc_lbl
             AND ppc.ndc_prod = v_prod.ndc_prod
             AND ppc.ndc_pckg = NVL( v_prod.ndc_pckg, ppc.ndc_pckg);
-         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+         p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
          WHILE  v_row_total > 0
             AND v_row_count = v_commit
          LOOP
@@ -8729,7 +9451,7 @@ AS
                AND ppc.ndc_prod = v_prod.ndc_prod
                AND ppc.ndc_pckg = NVL( v_prod.ndc_pckg, ppc.ndc_pckg)
                AND ROWNUM <= v_commit;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
          END LOOP;
          IF v_prod.ndc_pckg IS NULL
          THEN
@@ -8743,7 +9465,7 @@ AS
                AND ppfc.calc_typ_cd = v_prod.calc_typ_cd
                AND ppfc.ndc_lbl = v_prod.ndc_lbl
                AND ppfc.ndc_prod = v_prod.ndc_prod;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8754,7 +9476,7 @@ AS
                   AND ppfc.ndc_lbl = v_prod.ndc_lbl
                   AND ppfc.ndc_prod = v_prod.ndc_prod
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
          END IF;
          -----------------------------------------------------------------------
@@ -8771,7 +9493,7 @@ AS
              WHERE pt.prfl_id = v_prod.prfl_id
                AND pt.ndc_lbl = v_prod.ndc_lbl
                AND pt.ndc_prod = v_prod.ndc_prod;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8781,7 +9503,7 @@ AS
                   AND pt.ndc_lbl = v_prod.ndc_lbl
                   AND pt.ndc_prod = v_prod.ndc_prod
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
             -----------------------------------------------------------------------
             -- Product Transmissions
@@ -8793,7 +9515,7 @@ AS
                AND pt.ndc_lbl = v_prod.ndc_lbl
                AND pt.ndc_prod = v_prod.ndc_prod
                AND pt.trnsmsn_seq_no = v_prod.trnsmsn_seq_no;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8804,7 +9526,7 @@ AS
                   AND pt.ndc_prod = v_prod.ndc_prod
                   AND pt.trnsmsn_seq_no = v_prod.trnsmsn_seq_no
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
             -----------------------------------------------------------------------
             -- PUR Category Interim results
@@ -8815,7 +9537,7 @@ AS
              WHERE pcir.ndc_lbl = v_prod.ndc_lbl
                AND pcir.ndc_prod = v_prod.ndc_prod
                AND pcir.period_id = v_prod.period_id;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8825,7 +9547,7 @@ AS
                   AND pcir.ndc_prod = v_prod.ndc_prod
                   AND pcir.period_id = v_prod.period_id
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
             -----------------------------------------------------------------------
             -- PUR Interim results
@@ -8836,7 +9558,7 @@ AS
              WHERE pir.ndc_lbl = v_prod.ndc_lbl
                AND pir.ndc_prod = v_prod.ndc_prod
                AND pir.period_id = v_prod.period_id;
-            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_row_done, v_row_total, v_row_count);
+            p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, NULL, v_row_total, v_commit, v_commit, v_row_done, v_row_total, v_row_count);
             WHILE  v_row_total > 0
                AND v_row_count = v_commit
             LOOP
@@ -8846,7 +9568,7 @@ AS
                   AND pir.ndc_prod = v_prod.ndc_prod
                   AND pir.period_id = v_prod.period_id
                   AND ROWNUM <= v_commit;
-               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_row_done, v_row_total, v_row_count);
+               p_row( v_action_name, v_user_msg, v_user_msg_tbl, v_tbl_abbr, v_row_done, v_row_total, SQL%ROWCOUNT, v_commit, v_row_done, v_row_total, v_row_count);
             END LOOP;
          END IF;
       END LOOP;
@@ -8863,8 +9585,14 @@ AS
       END IF;
       p_calc_log( v_action_name || 'End', v_user_msg, v_comp_typ_cd);
       pkg_utils.p_appinfo_stk_pop;
+      -- If the calc is not running, clear the parameter record
+      IF NOT f_is_calc_running()
+      THEN
+         gv_param_rec := v_null_param_rec;
+      END IF;
       -- Restore the module name
       gv_calc_log_module_name := v_module_name;
+      gv_calc_log_client_info := v_client_info;
       -- Set calc delete runnning status to OFF
       gv_calc_delete_running := FALSE;
    EXCEPTION
@@ -8958,6 +9686,10 @@ AS
       *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
       *                            Add SAP4H source system constants
       *                            Reorder t_calc_param_rec columns
+      *  04/05/2020  M. Gedzior    RITM-1714054: Add SubPHS to Sales Exclusion
+      *              Joe Kidd      Renamed gv_mark_nom* to gv_mark_sls_excl*
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Clear new globals
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_init_calc';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Initialize environment for Calculations';
@@ -9159,10 +9891,12 @@ AS
       gv_pl102_tbl.DELETE();
       gv_mark_tbl.DELETE();
       gv_mark_id_tbl.DELETE();
+      gv_mark_pp_key_tbl.DELETE();
+      gv_mark_pp_tbl.DELETE();
       gv_mark_cust_id := NULL;
       gv_mark_cust_row_cnt_max := NULL;
-      gv_mark_nom_tbl.DELETE();
-      gv_mark_nom_id_tbl.DELETE();
+      gv_mark_sls_excl_tbl.DELETE();
+      gv_mark_sls_excl_id_tbl.DELETE();
       gv_bndl_use_dra_prod := TRUE;
       gv_bndl_use_dra_time := TRUE;
       gv_bndl_config := TRUE;
@@ -9171,9 +9905,12 @@ AS
       gv_accum_trans := TRUE;
       gv_cust_id_tbl.DELETE();
       gv_mark_records := TRUE;
+      gv_bndl_cust_id := NULL;
       gv_bndl_cust_id_tbl.DELETE();
+      gv_bndl_cust_id_wrk_tbl.DELETE();
       gv_bndl_cust_tbl.DELETE();
       gv_bndl_cust_cond_cnt := 0;
+      gv_bndl_trans_wrk_cnt := 0;
       gv_bndl_trans_ids.DELETE();
       gv_bndl_ind := pkg_constants.cs_flag_yes;
       gv_bndl_dts_cnt := 0;
@@ -10041,6 +10778,7 @@ AS
       *                  bp_pnt_trans_dtl_t
       *                  prfl_prod_comp_trans_t
       *                  prfl_prod_fmly_comp_trans_t
+      *                  prfl_sls_excl_t
       *
       *                  Records are flushed when:
       *                  - Forced by parameter
@@ -10069,10 +10807,15 @@ AS
       *                            transaction table flush on bulk row count
       *  01/15/2018  Joe Kidd      CHG-055804: Demand 6812 SURF BSI / Cust COT
       *                            Flush write cache for nominal
+      *  04/05/2020  M. Gedzior    RITM-1714054: Add SubPHS to Sales Exclusion
+      *              Joe Kidd      Renamed gv_mark_nom* to gv_mark_sls_excl*
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Remove calc key from cache, cache price points
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_mark_record_flush';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Flushes marked records marking tables';
       cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error while flushing marked records in marking tables';
+      v_pp_cnt              NUMBER := 0;
       v_cnt                 NUMBER := 0;
       v_save                BOOLEAN := FALSE;
    BEGIN
@@ -10090,13 +10833,30 @@ AS
          --        or Passed customer is different from previous customer
          gv_mark_cust_id := i_cust_id;
          gv_mark_id_tbl.DELETE();
-         gv_mark_nom_id_tbl.DELETE();
+         gv_mark_sls_excl_id_tbl.DELETE();
       END IF;
       IF    NVL( i_force, FALSE)
-         OR (gv_mark_tbl.COUNT() + gv_mark_nom_tbl.COUNT()) >= pkg_constants.cs_bulk_row_count
+         OR (gv_mark_tbl.COUNT() + gv_mark_sls_excl_tbl.COUNT()) >= pkg_constants.cs_bulk_row_count
       THEN
          -- flush the rows when forced or bulk row limit reached
          v_save := TRUE;
+      END IF;
+      IF     NVL( i_force, FALSE)
+         AND gv_mark_pp_tbl.COUNT() > 0
+      THEN
+         -- Flush the price points when forced (should all be inserted already)
+         FORALL v_i IN INDICES OF gv_mark_pp_tbl
+            UPDATE hcrs.prfl_prod_bp_pnt_t ppbp
+               SET ppbp.occurs_cnt = gv_mark_pp_tbl( v_i).occurs_cnt,
+                   ppbp.cmt_txt = gv_mark_pp_tbl( v_i).cmt_txt
+             WHERE ppbp.price_pnt_seq_no = gv_mark_pp_tbl( v_i).price_pnt_seq_no;
+         v_pp_cnt := SQL%ROWCOUNT;
+         IF v_pp_cnt <> gv_mark_pp_tbl.COUNT()
+         THEN
+            -- Some price points were not updated
+            p_raise_errors( cs_src_cd, cs_src_descr, -20000, 'Not all price points flushed',
+               'v_pp_cnt = '|| v_pp_cnt || '; gv_mark_pp_tbl.COUNT() = ' || gv_mark_pp_tbl.COUNT());
+         END IF;
       END IF;
       IF v_save
       THEN
@@ -10107,8 +10867,8 @@ AS
             IF gv_mark_tbl.COUNT() > 0
             THEN
                -- the main audit log has something to save
-               IF gv_mark_tbl( gv_mark_tbl.FIRST()).calc_typ_cd IN (pkg_constants.cs_calc_typ_nfamp_cd,
-                                                                    pkg_constants.cs_calc_typ_asp_cd)
+               IF gv_param_rec.calc_typ_cd IN (pkg_constants.cs_calc_typ_nfamp_cd,
+                                               pkg_constants.cs_calc_typ_asp_cd)
                THEN
                   -- NDC11 table (Nonfamp/ASP)
                   -- Use bulk bind to write records
@@ -10138,14 +10898,14 @@ AS
                          bndl_cd,
                          bndl_seq_no)
                         VALUES
-                        (gv_mark_tbl( v_i).prfl_id,
-                         gv_mark_tbl( v_i).ndc_lbl,
-                         gv_mark_tbl( v_i).ndc_prod,
-                         gv_mark_tbl( v_i).ndc_pckg,
-                         gv_mark_tbl( v_i).calc_typ_cd,
+                        (gv_param_rec.prfl_id,
+                         gv_param_rec.mk_ndc_lbl,
+                         gv_param_rec.mk_ndc_prod,
+                         gv_param_rec.mk_ndc_pckg,
+                         gv_param_rec.calc_typ_cd,
                          gv_mark_tbl( v_i).comp_typ_cd,
                          gv_mark_tbl( v_i).trans_id,
-                         gv_mark_tbl( v_i).co_id,
+                         gv_param_rec.co_id,
                          gv_mark_tbl( v_i).cls_of_trd_cd,
                          gv_mark_tbl( v_i).trans_adj_cd,
                          gv_mark_tbl( v_i).root_trans_id,
@@ -10162,7 +10922,7 @@ AS
                          gv_mark_tbl( v_i).bndl_cd,
                          gv_mark_tbl( v_i).bndl_seq_no);
                   v_cnt := v_cnt + SQL%ROWCOUNT;
-               ELSIF gv_mark_tbl( gv_mark_tbl.FIRST()).calc_typ_cd = pkg_constants.cs_calc_typ_amp_cd
+               ELSIF gv_param_rec.calc_typ_cd = pkg_constants.cs_calc_typ_amp_cd
                THEN
                   -- AMP
                   -- Use bulk bind to write records
@@ -10191,13 +10951,13 @@ AS
                          bndl_cd,
                          bndl_seq_no)
                         VALUES
-                        (gv_mark_tbl( v_i).prfl_id,
-                         gv_mark_tbl( v_i).ndc_lbl,
-                         gv_mark_tbl( v_i).ndc_prod,
-                         gv_mark_tbl( v_i).calc_typ_cd,
+                        (gv_param_rec.prfl_id,
+                         gv_param_rec.mk_ndc_lbl,
+                         gv_param_rec.mk_ndc_prod,
+                         gv_param_rec.calc_typ_cd,
                          gv_mark_tbl( v_i).comp_typ_cd,
                          gv_mark_tbl( v_i).trans_id,
-                         gv_mark_tbl( v_i).co_id,
+                         gv_param_rec.co_id,
                          gv_mark_tbl( v_i).cls_of_trd_cd,
                          gv_mark_tbl( v_i).trans_adj_cd,
                          gv_mark_tbl( v_i).root_trans_id,
@@ -10214,7 +10974,7 @@ AS
                          gv_mark_tbl( v_i).bndl_cd,
                          gv_mark_tbl( v_i).bndl_seq_no);
                   v_cnt := v_cnt + SQL%ROWCOUNT;
-               ELSIF gv_mark_tbl( gv_mark_tbl.FIRST()).calc_typ_cd = pkg_constants.cs_calc_typ_bp_cd
+               ELSIF gv_param_rec.calc_typ_cd = pkg_constants.cs_calc_typ_bp_cd
                  AND gv_mark_tbl( gv_mark_tbl.FIRST()).comp_typ_cd = pkg_constants.cs_bp_realised_mthd_typ_cd
                THEN
                   -- BP Realized Method
@@ -10245,14 +11005,14 @@ AS
                          bndl_cd,
                          bndl_seq_no)
                         VALUES
-                        (gv_mark_tbl( v_i).prfl_id,
-                         gv_mark_tbl( v_i).ndc_lbl,
-                         gv_mark_tbl( v_i).ndc_prod,
-                         gv_mark_tbl( v_i).calc_typ_cd,
+                        (gv_param_rec.prfl_id,
+                         gv_param_rec.mk_ndc_lbl,
+                         gv_param_rec.mk_ndc_prod,
+                         gv_param_rec.calc_typ_cd,
                          gv_mark_tbl( v_i).comp_typ_cd,
                          gv_mark_tbl( v_i).trans_id,
                          gv_mark_tbl( v_i).price_pnt_seq_no,
-                         gv_mark_tbl( v_i).co_id,
+                         gv_param_rec.co_id,
                          gv_mark_tbl( v_i).cls_of_trd_cd,
                          gv_mark_tbl( v_i).trans_adj_cd,
                          gv_mark_tbl( v_i).root_trans_id,
@@ -10271,11 +11031,11 @@ AS
                   v_cnt := v_cnt + SQL%ROWCOUNT;
                END IF;
             END IF;
-            IF gv_mark_nom_tbl.COUNT() > 0
+            IF gv_mark_sls_excl_tbl.COUNT() > 0
             THEN
-               -- the nominal log has something to save
+               -- the exclusion log has something to save
                -- Use bulk bind to write records
-               FORALL v_i IN INDICES OF gv_mark_nom_tbl
+               FORALL v_i IN INDICES OF gv_mark_sls_excl_tbl
                   INSERT INTO hcrs.prfl_sls_excl_t
                      (prfl_id,
                       trans_id,
@@ -10303,48 +11063,50 @@ AS
                       splt_pct_seq_no,
                       bndl_cd,
                       bndl_seq_no,
-                      cmt_txt)
-                     SELECT gv_mark_nom_tbl( v_i).prfl_id,
-                            gv_mark_nom_tbl( v_i).trans_id,
-                            gv_mark_nom_tbl( v_i).co_id,
-                            gv_mark_nom_tbl( v_i).cls_of_trd_cd,
-                            gv_mark_nom_tbl( v_i).over_ind,
-                            gv_mark_nom_tbl( v_i).apprvd_ind,
-                            gv_mark_nom_tbl( v_i).apprvd_dt,
-                            gv_mark_nom_tbl( v_i).apprvd_by,
-                            gv_mark_nom_tbl( v_i).adj_cnt,
-                            gv_mark_nom_tbl( v_i).adj_pkg_qty,
-                            gv_mark_nom_tbl( v_i).adj_total_amt,
-                            gv_mark_nom_tbl( v_i).nmnl_thres_amt,
-                            gv_mark_nom_tbl( v_i).trans_adj_cd,
-                            gv_mark_nom_tbl( v_i).root_trans_id,
-                            gv_mark_nom_tbl( v_i).parent_trans_id,
-                            gv_mark_nom_tbl( v_i).trans_dt,
-                            gv_mark_nom_tbl( v_i).dllr_amt,
-                            gv_mark_nom_tbl( v_i).pkg_qty,
-                            gv_mark_nom_tbl( v_i).chrgbck_amt,
-                            gv_mark_nom_tbl( v_i).term_disc_pct,
-                            gv_mark_nom_tbl( v_i).nom_dllr_amt,
-                            gv_mark_nom_tbl( v_i).nom_pkg_qty,
-                            gv_mark_nom_tbl( v_i).splt_pct_typ,
-                            gv_mark_nom_tbl( v_i).splt_pct_seq_no,
-                            gv_mark_nom_tbl( v_i).bndl_cd,
-                            gv_mark_nom_tbl( v_i).bndl_seq_no,
-                            gv_mark_nom_tbl( v_i).cmt_txt
+                      cmt_txt,
+                      sls_excl_cd)
+                     SELECT gv_param_rec.prfl_id,
+                            gv_mark_sls_excl_tbl( v_i).trans_id,
+                            gv_param_rec.co_id,
+                            gv_mark_sls_excl_tbl( v_i).cls_of_trd_cd,
+                            gv_mark_sls_excl_tbl( v_i).over_ind,
+                            gv_mark_sls_excl_tbl( v_i).apprvd_ind,
+                            gv_mark_sls_excl_tbl( v_i).apprvd_dt,
+                            gv_mark_sls_excl_tbl( v_i).apprvd_by,
+                            gv_mark_sls_excl_tbl( v_i).adj_cnt,
+                            gv_mark_sls_excl_tbl( v_i).adj_pkg_qty,
+                            gv_mark_sls_excl_tbl( v_i).adj_total_amt,
+                            gv_mark_sls_excl_tbl( v_i).nmnl_thres_amt,
+                            gv_mark_sls_excl_tbl( v_i).trans_adj_cd,
+                            gv_mark_sls_excl_tbl( v_i).root_trans_id,
+                            gv_mark_sls_excl_tbl( v_i).parent_trans_id,
+                            gv_mark_sls_excl_tbl( v_i).trans_dt,
+                            gv_mark_sls_excl_tbl( v_i).dllr_amt,
+                            gv_mark_sls_excl_tbl( v_i).pkg_qty,
+                            gv_mark_sls_excl_tbl( v_i).chrgbck_amt,
+                            gv_mark_sls_excl_tbl( v_i).term_disc_pct,
+                            gv_mark_sls_excl_tbl( v_i).nom_dllr_amt,
+                            gv_mark_sls_excl_tbl( v_i).nom_pkg_qty,
+                            gv_mark_sls_excl_tbl( v_i).splt_pct_typ,
+                            gv_mark_sls_excl_tbl( v_i).splt_pct_seq_no,
+                            gv_mark_sls_excl_tbl( v_i).bndl_cd,
+                            gv_mark_sls_excl_tbl( v_i).bndl_seq_no,
+                            gv_mark_sls_excl_tbl( v_i).cmt_txt,
+                            gv_mark_sls_excl_tbl( v_i).sls_excl_cd
                        FROM dual
                       WHERE NOT EXISTS
                             ( -- Skip rows already in the table from previous runs
                               SELECT NULL
                                 FROM hcrs.prfl_sls_excl_t pse
-                               WHERE pse.prfl_id = gv_mark_nom_tbl( v_i).prfl_id
-                                 AND pse.trans_id = gv_mark_nom_tbl( v_i).trans_id
+                               WHERE pse.prfl_id = gv_param_rec.prfl_id
+                                 AND pse.trans_id = gv_mark_sls_excl_tbl( v_i).trans_id
                             );
                v_cnt := v_cnt + SQL%ROWCOUNT;
             END IF;
          END IF;
          -- Delete marking record caches
          gv_mark_tbl.DELETE();
-         gv_mark_nom_tbl.DELETE();
+         gv_mark_sls_excl_tbl.DELETE();
       END IF;
       p_commit( v_cnt);
    EXCEPTION
@@ -10559,6 +11321,8 @@ AS
       *                              formula / Winthrop BP Change
       *                            Apply Cash Discount % to Wholesaler Source
       *                            Program Chargebacks
+      *  04/05/2020  M. Gedzior    RITM-1714054: Add SubPHS to Sales Exclusion
+      *              Joe Kidd      Moved sales exclusion mode constants to pkg_contants
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_get_trans_vals';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Determines the values for a transaction';
@@ -10568,8 +11332,8 @@ AS
       v_cmt_txt             hcrs.prfl_prod_bp_pnt_t.cmt_txt%TYPE;
    BEGIN
       IF     io_trans_group_rec.source_sys_cde = pkg_constants.cs_system_x360
-         AND (   i_trns_amt_cd IN (cs_trns_amt_nom_chk,
-                                   cs_trns_amt_hhs_chk)
+         AND (   i_trns_amt_cd IN (pkg_constants.cs_sls_excl_cd_nom,
+                                   pkg_constants.cs_sls_excl_cd_hhs)
               OR io_trans_group_rec.comp_dllrs = pkg_constants.cs_comp_dllrs_price
              )
       THEN
@@ -10621,11 +11385,11 @@ AS
          THEN
             io_trans_group_rec.mk_dllr_amt := v_prc_pnt;
             io_trans_group_rec.mk_pkg_qty := 1;
-         ELSIF i_trns_amt_cd = cs_trns_amt_nom_chk
+         ELSIF i_trns_amt_cd = pkg_constants.cs_sls_excl_cd_nom
          THEN
             io_trans_group_rec.nom_dllr_amt := v_prc_pnt;
             io_trans_group_rec.nom_pkg_qty := 1;
-         ELSIF i_trns_amt_cd = cs_trns_amt_hhs_chk
+         ELSIF i_trns_amt_cd = pkg_constants.cs_sls_excl_cd_hhs
          THEN
             io_trans_group_rec.hhs_dllr_amt := v_prc_pnt;
             io_trans_group_rec.hhs_pkg_qty := 1;
@@ -10641,8 +11405,8 @@ AS
             AND io_trans_group_rec.whls_cot_grp_cd IN
                 (pkg_constants.cs_cot_wholesaler,
                  pkg_constants.cs_cot_whlslr_no_cpp)
-            AND (   i_trns_amt_cd IN (cs_trns_amt_nom_chk,
-                                      cs_trns_amt_hhs_chk)
+            AND (   i_trns_amt_cd IN (pkg_constants.cs_sls_excl_cd_nom,
+                                      pkg_constants.cs_sls_excl_cd_hhs)
                  OR io_trans_group_rec.comp_dllrs = pkg_constants.cs_comp_dllrs_price
                 )
          THEN
@@ -10695,7 +11459,7 @@ AS
                               i_rebate_no_dsc);
             o_dllrs := io_trans_group_rec.mk_dllr_amt;
             o_units := io_trans_group_rec.mk_pkg_qty;
-         ELSIF i_trns_amt_cd = cs_trns_amt_nom_chk
+         ELSIF i_trns_amt_cd = pkg_constants.cs_sls_excl_cd_nom
          THEN
             -----------------------------------------------------------------------
             -- Nominal check values
@@ -10723,7 +11487,7 @@ AS
             END IF;
             o_dllrs := io_trans_group_rec.nom_dllr_amt;
             o_units := io_trans_group_rec.nom_pkg_qty;
-         ELSIF i_trns_amt_cd = cs_trns_amt_hhs_chk
+         ELSIF i_trns_amt_cd = pkg_constants.cs_sls_excl_cd_hhs
          THEN
             -----------------------------------------------------------------------
             -- HHS check values
@@ -10791,20 +11555,20 @@ AS
 
 
    PROCEDURE p_get_trans_vals
-      (io_trans_group_tbl IN OUT pkg_common_cursors.t_calc_trans_tbl,
-       i_trns_amt_cd      IN     VARCHAR2,
-       i_nvl              IN     NUMBER,
-       o_dllrs            OUT    NUMBER,
-       o_units            OUT    NUMBER,
-       o_prc_pnt          OUT    NUMBER,
-       io_contr           IN OUT BOOLEAN,
-       io_phs_pvp_contr   IN OUT BOOLEAN,
-       io_phs_contr       IN OUT BOOLEAN,
-       io_fss_contr       IN OUT BOOLEAN,
-       io_zero_dllrs      IN OUT BOOLEAN,
-       io_chk_nom         IN OUT BOOLEAN,
-       io_chk_hhs         IN OUT BOOLEAN,
-       i_rebate_no_dsc    IN     BOOLEAN)
+      (io_trans_group_tbl IN OUT NOCOPY pkg_common_cursors.t_calc_trans_tbl,
+       i_trns_amt_cd      IN            VARCHAR2,
+       i_nvl              IN            NUMBER,
+       o_dllrs            OUT           NUMBER,
+       o_units            OUT           NUMBER,
+       o_prc_pnt          OUT           NUMBER,
+       io_contr           IN OUT        BOOLEAN,
+       io_phs_pvp_contr   IN OUT        BOOLEAN,
+       io_phs_contr       IN OUT        BOOLEAN,
+       io_fss_contr       IN OUT        BOOLEAN,
+       io_zero_dllrs      IN OUT        BOOLEAN,
+       io_chk_nom         IN OUT        BOOLEAN,
+       io_chk_hhs         IN OUT        BOOLEAN,
+       i_rebate_no_dsc    IN            BOOLEAN)
    IS
       /*************************************************************************
       * Procedure Name : p_get_trans_vals
@@ -10847,6 +11611,8 @@ AS
       *                            Remove main transaction and total variables
       *  01/15/2018  Joe Kidd      CHG-055804: Demand 6812 SURF BSI / Cust COT
       *                            Change parameters, perform component checks
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Add NOCOPY to in/out table for performance
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_get_trans_vals';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Determines the values for a transaction';
@@ -11146,13 +11912,79 @@ AS
    END p_ins_price_pnt;
 
 
+   FUNCTION f_mark_price_pnt
+      (i_comp_typ_cd IN hcrs.prfl_prod_bp_pnt_t.bp_mthd_typ_cd%TYPE,
+       i_price_amt   IN hcrs.prfl_prod_bp_pnt_t.price_amt%TYPE,
+       i_occurs_cnt  IN hcrs.prfl_prod_bp_pnt_t.occurs_cnt%TYPE,
+       i_cmt_txt     IN hcrs.prfl_prod_bp_pnt_t.cmt_txt%TYPE := NULL)
+      RETURN hcrs.prfl_prod_bp_pnt_t.price_pnt_seq_no%TYPE
+   IS
+      /*************************************************************************
+      * Function Name : f_mark_price_pnt
+      *  Input params : i_comp_typ_cd - component type code
+      *               : i_price_amt - bp price point
+      *               : i_occurs_cnt - number of trans at this price
+      *               : i_cmt_txt - Sets comment on price point
+      * Output params : none
+      *       Returns : NUMBER - Price Point Sequence of price point
+      *  Date Created : 08/01/2020
+      *        Author : Joe Kidd
+      *   Description : Mark price point in the cache
+      *
+      * MOD HISTORY
+      *  Date        Modified by   Reason
+      *  ----------  ------------  ---------------------------------------------
+      *************************************************************************/
+      cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.f_mark_price_pnt';
+      cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Mark price point in the cache';
+      cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error while marking price point in the cache';
+      v_mark_pp_key         VARCHAR2(100);
+      v_mark_pp             BINARY_INTEGER;
+   BEGIN
+      v_mark_pp_key := '|' || i_comp_typ_cd || '|' || i_price_amt || '|';
+      IF gv_mark_pp_key_tbl.EXISTS( v_mark_pp_key)
+      THEN
+         v_mark_pp := gv_mark_pp_key_tbl( v_mark_pp_key).mark_pp;
+      ELSE
+         -- Not in cache, craete the price point record, add to cache
+         v_mark_pp := gv_mark_pp_tbl.COUNT() + 1;
+         gv_mark_pp_key_tbl( v_mark_pp_key).mark_pp := v_mark_pp;
+         IF gv_mark_records
+         THEN
+            gv_mark_pp_tbl( v_mark_pp).price_pnt_seq_no := f_ins_price_pnt
+                                                              (gv_param_rec.prfl_id,
+                                                               gv_param_rec.mk_ndc_lbl,
+                                                               gv_param_rec.mk_ndc_prod,
+                                                               i_comp_typ_cd,
+                                                               i_price_amt,
+                                                               i_occurs_cnt,
+                                                               pkg_constants.cs_flag_no,
+                                                               i_cmt_txt);
+         END IF;
+         gv_mark_pp_tbl( v_mark_pp).occurs_cnt := 0;
+      END IF;
+      gv_mark_pp_tbl( v_mark_pp).occurs_cnt := gv_mark_pp_tbl( v_mark_pp).occurs_cnt + i_occurs_cnt;
+      gv_mark_pp_tbl( v_mark_pp).cmt_txt := NVL( i_cmt_txt, gv_mark_pp_tbl( v_mark_pp).cmt_txt);
+      RETURN gv_mark_pp_tbl( v_mark_pp).price_pnt_seq_no;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         p_raise_errors( cs_src_cd, cs_src_descr, SQLCODE, SQLERRM,
+            'Fatal ' || cs_cmt_txt ||
+            ' i_comp_typ_cd=[' || i_comp_typ_cd ||
+            '] i_price_amt=[' || i_price_amt ||
+            '] i_occurs_cnt=[' || i_occurs_cnt ||
+            '] i_cmt_txt=[' || i_cmt_txt || ']');
+   END f_mark_price_pnt;
+
+
    PROCEDURE p_mark_record
       (i_trans_group_tbl IN pkg_common_cursors.t_calc_trans_tbl,
        i_dllrs           IN NUMBER,
        i_units           IN NUMBER,
        i_prc_pnt         IN NUMBER,
        i_comp_typ_cd     IN hcrs.prfl_prod_calc_comp_def_t.comp_typ_cd%TYPE := NULL,
-       i_use_hhs_chk     IN BOOLEAN := FALSE)
+       i_sls_excl_cd     IN prfl_sls_excl_t.sls_excl_cd%TYPE := NULL)
    IS
       /*************************************************************************
       * Procedure Name : p_mark_record
@@ -11161,8 +11993,7 @@ AS
       *                : i_units - total units for the entire transaction
       *                : i_prc_pnt - Price Point value
       *                : i_comp_typ_cd - Component Type Code, if passed overrides table
-      *                : i_use_hhs_chk - If TRUE, hhs check values will be used
-      *                :                 instead of transaction and nominal values
+      *                : i_sls_excl_cd - Accumulate Nominal or Sub-PHS sales exclusion amonuts
       *  Output params : None
       *   Date Created : 12/13/2006
       *         Author : Joe Kidd
@@ -11197,6 +12028,11 @@ AS
       *                            Changed parameters, Add marked row count logging
       *  03/01/2019  Joe Kidd      CHG-0137941: RITM-1096050: NonFAMP sub-PHS issue
       *                            GTT column reduction
+      *  04/05/2020  M. Gedzior    RITM-1714054: Add SubPHS to Sales Exclusion
+      *              Joe Kidd      Control Nom or HHS values with code
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Remove calc key from cache, cache price points
+      *                            Move counter update outside loop
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_mark_record';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Marks records in the prfl_prod_fmly_comp_trans_t table';
@@ -11232,35 +12068,22 @@ AS
          END IF;
          -- round amount to decimal precision
          v_prc_pnt := ROUND( v_prc_pnt, gv_param_rec.dec_pcsn);
-         IF gv_mark_records
-         THEN
-            -- insert BP point
-            v_price_pnt_seq_no := f_ins_price_pnt
-                                     (gv_param_rec.prfl_id,
-                                      gv_param_rec.ndc_lbl,
-                                      gv_param_rec.ndc_prod,
-                                      v_comp_typ_cd,
-                                      v_prc_pnt,
-                                      i_trans_group_tbl.COUNT(), -- count of transactions
-                                      pkg_constants.cs_flag_no,
-                                      i_trans_group_tbl( v_i).cmt_txt);
-         END IF;
+         -- Add price point, get sequence number
+         v_price_pnt_seq_no := f_mark_price_pnt
+                                  (v_comp_typ_cd,
+                                   v_prc_pnt,
+                                   i_trans_group_tbl.COUNT(), -- count of transactions
+                                   i_trans_group_tbl( v_i).cmt_txt);
       END IF;
       v_i := i_trans_group_tbl.FIRST();
       WHILE v_i IS NOT NULL
       LOOP
          -- Populate marking cache
          v_j := NVL( gv_mark_tbl.COUNT(), 0) + 1;
-         gv_mark_tbl( v_j).prfl_id := gv_param_rec.prfl_id;
-         gv_mark_tbl( v_j).ndc_lbl := gv_param_rec.ndc_lbl;
-         gv_mark_tbl( v_j).ndc_prod := gv_param_rec.ndc_prod;
-         gv_mark_tbl( v_j).ndc_pckg := gv_param_rec.ndc_pckg;
-         gv_mark_tbl( v_j).calc_typ_cd := gv_param_rec.calc_typ_cd;
          gv_mark_tbl( v_j).comp_typ_cd := v_comp_typ_cd;
          gv_mark_tbl( v_j).trans_id := i_trans_group_tbl( v_i).trans_id;
          gv_mark_tbl( v_j).price_pnt_seq_no := v_price_pnt_seq_no;
          gv_mark_tbl( v_j).cls_of_trd_cd := i_trans_group_tbl( v_i).cust_cls_of_trd_cd;
-         gv_mark_tbl( v_j).co_id := gv_param_rec.co_id;
          gv_mark_tbl( v_j).trans_adj_cd := i_trans_group_tbl( v_i).trans_adj_cd;
          IF i_trans_group_tbl( v_i).trans_adj_cd = pkg_constants.cs_trans_adj_original
          THEN
@@ -11275,21 +12098,30 @@ AS
          gv_mark_tbl( v_j).bndl_cd := i_trans_group_tbl( v_i).bndl_cd;
          gv_mark_tbl( v_j).bndl_seq_no := NULL;
          gv_mark_tbl( v_j).trans_dt := i_trans_group_tbl( v_i).trans_dt;
-         IF NVL( i_use_hhs_chk, FALSE)
+         IF i_sls_excl_cd IS NULL
          THEN
             -- Transaction Dollars and Units
+            gv_mark_tbl( v_j).dllr_amt := i_trans_group_tbl( v_i).mk_dllr_amt;
+            gv_mark_tbl( v_j).pkg_qty := i_trans_group_tbl( v_i).mk_pkg_qty;
+            -- Nominal or HHS Dollars and Units
+            gv_mark_tbl( v_j).nom_dllr_amt := NVL( i_trans_group_tbl( v_i).nom_dllr_amt, i_trans_group_tbl( v_i).hhs_dllr_amt);
+            gv_mark_tbl( v_j).nom_pkg_qty := NVL( i_trans_group_tbl( v_i).nom_pkg_qty, i_trans_group_tbl( v_i).hhs_pkg_qty);
+         ELSIF i_sls_excl_cd = pkg_constants.cs_sls_excl_cd_nom
+         THEN
+            -- Nominal for Transaction Dollars and Units
+            gv_mark_tbl( v_j).dllr_amt := i_trans_group_tbl( v_i).nom_dllr_amt;
+            gv_mark_tbl( v_j).pkg_qty := i_trans_group_tbl( v_i).nom_pkg_qty;
+            -- Nominal Dollars and Units
+            gv_mark_tbl( v_j).nom_dllr_amt := i_trans_group_tbl( v_i).nom_dllr_amt;
+            gv_mark_tbl( v_j).nom_pkg_qty := i_trans_group_tbl( v_i).nom_pkg_qty;
+         ELSIF i_sls_excl_cd = pkg_constants.cs_sls_excl_cd_hhs
+         THEN
+            -- HHS for Transaction Dollars and Units
             gv_mark_tbl( v_j).dllr_amt := i_trans_group_tbl( v_i).hhs_dllr_amt;
             gv_mark_tbl( v_j).pkg_qty := i_trans_group_tbl( v_i).hhs_pkg_qty;
             -- HHS Dollars and Units
             gv_mark_tbl( v_j).nom_dllr_amt := i_trans_group_tbl( v_i).hhs_dllr_amt;
             gv_mark_tbl( v_j).nom_pkg_qty := i_trans_group_tbl( v_i).hhs_pkg_qty;
-         ELSE
-            -- Transaction Dollars and Units
-            gv_mark_tbl( v_j).dllr_amt := i_trans_group_tbl( v_i).mk_dllr_amt;
-            gv_mark_tbl( v_j).pkg_qty := i_trans_group_tbl( v_i).mk_pkg_qty;
-            -- Nominal Dollars and Units
-            gv_mark_tbl( v_j).nom_dllr_amt := i_trans_group_tbl( v_i).nom_dllr_amt;
-            gv_mark_tbl( v_j).nom_pkg_qty := i_trans_group_tbl( v_i).nom_pkg_qty;
          END IF;
          -- Chargeback amount / Term Disc Pct no longer used
          gv_mark_tbl( v_j).chrgbck_amt := NULL;
@@ -11297,10 +12129,10 @@ AS
          -- Populate marking cache lookup table
          v_key := '|' || gv_mark_tbl( v_j).comp_typ_cd || '|' || gv_mark_tbl( v_j).trans_id || '|';
          gv_mark_id_tbl( v_key) := pkg_constants.cs_flag_yes;
-         -- Add to the mark row count
-         p_set_cntr( cs_calc_log_cntr_rows_marked);
          v_i := i_trans_group_tbl.NEXT( v_i);
       END LOOP;
+      -- Add to the mark row count
+      p_set_cntr( cs_calc_log_cntr_rows_marked, i_trans_group_tbl.COUNT());
    EXCEPTION
       WHEN OTHERS
       THEN
@@ -11309,24 +12141,30 @@ AS
    END p_mark_record;
 
 
-   FUNCTION f_mark_nominal
-      (i_trans_group_tbl IN pkg_common_cursors.t_calc_trans_tbl,
-       i_dllrs           IN NUMBER,
-       i_units           IN NUMBER,
-       i_nom_thresh      IN NUMBER)
-      RETURN BOOLEAN
+   FUNCTION f_mark_sls_excl
+      (i_trans_group_tbl  IN pkg_common_cursors.t_calc_trans_tbl,
+       i_dllrs            IN NUMBER,
+       i_units            IN NUMBER,
+       i_thresh_amt       IN NUMBER,
+       i_sls_excl_cd      IN prfl_sls_excl_t.sls_excl_cd%TYPE,
+       i_sls_excl_ind     IN prfl_sls_excl_t.over_ind%TYPE,
+       i_sls_excl_ind_def IN prfl_sls_excl_t.over_ind%TYPE)
+      RETURN prfl_sls_excl_t.over_ind%TYPE
    IS
       /*************************************************************************
-      * Function Name : f_mark_nominal
+      * Function Name : f_mark_sls_excl
       *  Input params : i_trans_group_tbl - all lines of a transaction group (orig + adj)
       *               : i_dllrs - Transaction Dollar amount
       *               : i_units - Transaction Unit amount
-      *               : i_nom_thresh - nominal threshold amount
+      *               : i_thresh_amt - sales exclusion threshold amount
+      *               : i_sls_excl_cd - type of a sales exclusion, e.g. nominal (NOM), sub PHS (HHS)
+      *               : i_sls_excl_ind - Retrieved user set sales exclusion value
+      *               : i_sls_excl_ind_def - Default include/exclude when sales exclusion is first identified
       * Output params : None
       *       Returns : BOOLEAN, Inclusion setting set by user
       *  Date Created : 06/22/2009
       *        Author : Joe Kidd
-      *   Description : Inserts nominal transactions into the exclusions table
+      *   Description : Inserts sales exclusion transactions into the exclusions table
       *                 setting the override to the passed value or to the
       *                 last value set by the user.
       *
@@ -11337,11 +12175,16 @@ AS
       *                            Change to function, cache writes, add new columns,
       *                            control default inclusion here, simplify comment
       *                            lookup, add marked row count logging
+      *  04/05/2020  M. Gedzior    RITM-1714054: Add SubPHS to Sales Exclusion
+      *              Joe Kidd      Renamed from f_mark_nominal
+      *                            Renamed gv_mark_nom* to gv_mark_sls_excl*
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Remove calc key from cache, cache price points
+      *                            Move counter update outside loop
       *************************************************************************/
-      cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.f_mark_nominal';
+      cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.f_mark_sls_excl';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Inserts nominal transactions into the exclusions table.';
       cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error while inserting nominal transactions into the exclusions table.';
-      v_over_ind            hcrs.prfl_sls_excl_t.over_ind%TYPE;
       v_sls_excl_ind        hcrs.prfl_sls_excl_t.over_ind%TYPE;
       v_cmt_txt             hcrs.prfl_sls_excl_t.cmt_txt%TYPE;
       v_i                   BINARY_INTEGER;
@@ -11350,23 +12193,18 @@ AS
       v_i := i_trans_group_tbl.FIRST();
       -- Flush rows if this is a new customer
       p_mark_record_flush( i_trans_group_tbl( v_i).cust_id);
-      ------------------------------------------------
-      -- DEFAULT: Non-nominal/false/included
-      ------------------------------------------------
-      v_over_ind := pkg_constants.cs_include;
-      --v_over_ind := pkg_constants.cs_exclude;
-      IF gv_mark_nom_id_tbl.EXISTS( i_trans_group_tbl( v_i).trans_id)
+      IF gv_mark_sls_excl_id_tbl.EXISTS( i_trans_group_tbl( v_i).trans_id)
       THEN
-         -- Already processed as nominal, use last result
-         v_over_ind := gv_mark_nom_id_tbl( i_trans_group_tbl( v_i).trans_id);
+         -- Already processed as exclusion, use last result
+         v_sls_excl_ind := gv_mark_sls_excl_id_tbl( i_trans_group_tbl( v_i).trans_id);
       ELSE
          -- Insert record as Included to reverse exclusion logic
          -- This reversal was put into place before SAP adjustments were tied
          -- together to allow adjustments to be included in the calc without
-         -- user intervention.  A true nominal sale must be manually excluded
+         -- user intervention.  A true excluded/nominal sale must be manually excluded
          -- by the end user from the front end in order to be removed from the
          -- calculation.
-         v_sls_excl_ind := i_trans_group_tbl( v_i).sls_excl_ind;
+         v_sls_excl_ind := i_sls_excl_ind;
          IF v_sls_excl_ind IS NULL
          THEN
             -- Get the most recently approved inclusion setting and comment for
@@ -11390,76 +12228,84 @@ AS
                         AND pse.prfl_id <> gv_param_rec.prfl_id
                    ) z
              WHERE z.rn = 1;
-            -- Use default is nothing found
-            v_sls_excl_ind := NVL( v_sls_excl_ind, v_over_ind);
+            -- Use default if nothing found
+            v_sls_excl_ind := NVL( v_sls_excl_ind, i_sls_excl_ind_def);
          END IF;
          v_i := i_trans_group_tbl.FIRST();
          WHILE v_i IS NOT NULL
          LOOP
             -- Populate marking cache
-            v_j := NVL( gv_mark_nom_tbl.COUNT(), 0) + 1;
-            gv_mark_nom_tbl( v_j).prfl_id := gv_param_rec.prfl_id;
-            gv_mark_nom_tbl( v_j).trans_id := i_trans_group_tbl( v_i).trans_id;
-            gv_mark_nom_tbl( v_j).co_id := gv_param_rec.co_id;
-            gv_mark_nom_tbl( v_j).cls_of_trd_cd := i_trans_group_tbl( v_i).cust_cls_of_trd_cd;
-            gv_mark_nom_tbl( v_j).over_ind := v_sls_excl_ind;
-            gv_mark_nom_tbl( v_j).cmt_txt := v_cmt_txt;
-            -- Row will exist if already approved, so just set defaults
-            gv_mark_nom_tbl( v_j).apprvd_ind := pkg_constants.cs_flag_no;
-            gv_mark_nom_tbl( v_j).apprvd_dt := NULL;
-            gv_mark_nom_tbl( v_j).apprvd_by := NULL;
+            v_j := NVL( gv_mark_sls_excl_tbl.COUNT(), 0) + 1;
+            gv_mark_sls_excl_tbl( v_j).trans_id := i_trans_group_tbl( v_i).trans_id;
+            gv_mark_sls_excl_tbl( v_j).cls_of_trd_cd := i_trans_group_tbl( v_i).cust_cls_of_trd_cd;
+            gv_mark_sls_excl_tbl( v_j).over_ind := v_sls_excl_ind;
+             -- Row will exist if already approved, so just set defaults
+            gv_mark_sls_excl_tbl( v_j).apprvd_ind := pkg_constants.cs_flag_no;
+            gv_mark_sls_excl_tbl( v_j).apprvd_dt := NULL;
+            gv_mark_sls_excl_tbl( v_j).apprvd_by := NULL;
             -- Only Include the adjustment count, quantity, amount, and nominal threshold for original transactions
             IF v_i = i_trans_group_tbl.FIRST()
             THEN
                -- First record is the original invoice transaction, the rest of the records are adjustments
-               gv_mark_nom_tbl( v_j).adj_cnt := i_trans_group_tbl.COUNT() - 1;
-               gv_mark_nom_tbl( v_j).adj_pkg_qty := i_units;
-               gv_mark_nom_tbl( v_j).adj_total_amt := i_dllrs;
-               gv_mark_nom_tbl( v_j).nmnl_thres_amt := i_nom_thresh;
+               gv_mark_sls_excl_tbl( v_j).adj_cnt := i_trans_group_tbl.COUNT() - 1;
+               gv_mark_sls_excl_tbl( v_j).adj_pkg_qty := i_units;
+               gv_mark_sls_excl_tbl( v_j).adj_total_amt := i_dllrs;
+               gv_mark_sls_excl_tbl( v_j).nmnl_thres_amt := i_thresh_amt;
             ELSE
-               gv_mark_nom_tbl( v_j).adj_cnt := 0;
-               gv_mark_nom_tbl( v_j).adj_pkg_qty := NULL;
-               gv_mark_nom_tbl( v_j).adj_total_amt := NULL;
-               gv_mark_nom_tbl( v_j).nmnl_thres_amt := NULL;
+               gv_mark_sls_excl_tbl( v_j).adj_cnt := 0;
+               gv_mark_sls_excl_tbl( v_j).adj_pkg_qty := NULL;
+               gv_mark_sls_excl_tbl( v_j).adj_total_amt := NULL;
+               gv_mark_sls_excl_tbl( v_j).nmnl_thres_amt := NULL;
             END IF;
-            gv_mark_nom_tbl( v_j).trans_adj_cd := i_trans_group_tbl( v_i).trans_adj_cd;
+            gv_mark_sls_excl_tbl( v_j).trans_adj_cd := i_trans_group_tbl( v_i).trans_adj_cd;
             IF i_trans_group_tbl( v_i).trans_adj_cd = pkg_constants.cs_trans_adj_original
             THEN
-               gv_mark_nom_tbl( v_j).root_trans_id := NULL;
-               gv_mark_nom_tbl( v_j).parent_trans_id := NULL;
+               gv_mark_sls_excl_tbl( v_j).root_trans_id := NULL;
+               gv_mark_sls_excl_tbl( v_j).parent_trans_id := NULL;
             ELSE
-               gv_mark_nom_tbl( v_j).root_trans_id := i_trans_group_tbl( v_i).root_trans_id;
-               gv_mark_nom_tbl( v_j).parent_trans_id := i_trans_group_tbl( v_i).parent_trans_id;
+               gv_mark_sls_excl_tbl( v_j).root_trans_id := i_trans_group_tbl( v_i).root_trans_id;
+               gv_mark_sls_excl_tbl( v_j).parent_trans_id := i_trans_group_tbl( v_i).parent_trans_id;
             END IF;
-            gv_mark_nom_tbl( v_j).trans_dt := i_trans_group_tbl( v_i).trans_dt;
-            gv_mark_nom_tbl( v_j).splt_pct_typ := i_trans_group_tbl( v_i).splt_pct_typ;
-            gv_mark_nom_tbl( v_j).splt_pct_seq_no := i_trans_group_tbl( v_i).splt_pct_seq_no;
-            gv_mark_nom_tbl( v_j).bndl_cd := i_trans_group_tbl( v_i).bndl_cd;
-            gv_mark_nom_tbl( v_j).bndl_seq_no := NULL;
+            gv_mark_sls_excl_tbl( v_j).trans_dt := i_trans_group_tbl( v_i).trans_dt;
             -- Get Transaction Dollars and Units
-            gv_mark_nom_tbl( v_j).dllr_amt := i_trans_group_tbl( v_i).mk_dllr_amt;
-            gv_mark_nom_tbl( v_j).pkg_qty := i_trans_group_tbl( v_i).mk_pkg_qty;
+            gv_mark_sls_excl_tbl( v_j).dllr_amt := i_trans_group_tbl( v_i).mk_dllr_amt;
+            gv_mark_sls_excl_tbl( v_j).pkg_qty := i_trans_group_tbl( v_i).mk_pkg_qty;
             -- Chargeback amount/Term Disc Pct deprecated
-            gv_mark_nom_tbl( v_j).chrgbck_amt := NULL;
-            gv_mark_nom_tbl( v_j).term_disc_pct := NULL;
+            gv_mark_sls_excl_tbl( v_j).chrgbck_amt := NULL;
+            gv_mark_sls_excl_tbl( v_j).term_disc_pct := NULL;
             -- Get Nominal Dollars and Units
-            gv_mark_nom_tbl( v_j).nom_dllr_amt := i_trans_group_tbl( v_i).nom_dllr_amt;
-            gv_mark_nom_tbl( v_j).nom_pkg_qty := i_trans_group_tbl( v_i).nom_pkg_qty;
+            IF i_sls_excl_cd = pkg_constants.cs_sls_excl_cd_nom
+            THEN
+               -- Nominal Dollars and Units
+               gv_mark_sls_excl_tbl( v_j).nom_dllr_amt := i_trans_group_tbl( v_i).nom_dllr_amt;
+               gv_mark_sls_excl_tbl( v_j).nom_pkg_qty := i_trans_group_tbl( v_i).nom_pkg_qty;
+            ELSIF i_sls_excl_cd = pkg_constants.cs_sls_excl_cd_hhs
+            THEN
+               -- HHS Dollars and Units
+               gv_mark_sls_excl_tbl( v_j).nom_dllr_amt := i_trans_group_tbl( v_i).hhs_dllr_amt;
+               gv_mark_sls_excl_tbl( v_j).nom_pkg_qty := i_trans_group_tbl( v_i).hhs_pkg_qty;
+            END IF;
+            gv_mark_sls_excl_tbl( v_j).splt_pct_typ := i_trans_group_tbl( v_i).splt_pct_typ;
+            gv_mark_sls_excl_tbl( v_j).splt_pct_seq_no := i_trans_group_tbl( v_i).splt_pct_seq_no;
+            gv_mark_sls_excl_tbl( v_j).bndl_cd := i_trans_group_tbl( v_i).bndl_cd;
+            gv_mark_sls_excl_tbl( v_j).bndl_seq_no := NULL;
+            gv_mark_sls_excl_tbl( v_j).cmt_txt := v_cmt_txt;
+            -- get exclusion type
+            gv_mark_sls_excl_tbl( v_j).sls_excl_cd := i_sls_excl_cd;
             -- Populate marking cache lookup table
-            gv_mark_nom_id_tbl( gv_mark_nom_tbl( v_j).trans_id) := v_sls_excl_ind;
-            -- Add to the mark row count
-            p_set_cntr( cs_calc_log_cntr_rows_marked);
+            gv_mark_sls_excl_id_tbl( gv_mark_sls_excl_tbl( v_j).trans_id) := v_sls_excl_ind;
             v_i := i_trans_group_tbl.NEXT( v_i);
          END LOOP;
+         -- Add to the mark row count
+         p_set_cntr( cs_calc_log_cntr_rows_marked, i_trans_group_tbl.COUNT());
       END IF;
-      -- Set actual inclusion values
-      RETURN (v_over_ind = pkg_constants.cs_exclude);
+      RETURN v_sls_excl_ind;
    EXCEPTION
       WHEN OTHERS
       THEN
          p_raise_errors( cs_src_cd, cs_src_descr, SQLCODE, SQLERRM,
             'Fatal ' || cs_cmt_txt);
-   END f_mark_nominal;
+   END f_mark_sls_excl;
 
 
    FUNCTION f_is_trans_marked
@@ -11555,9 +12401,215 @@ AS
    END f_is_trans_marked;
 
 
+   FUNCTION f_is_sls_excl
+      (i_sls_excl_cd      IN            prfl_sls_excl_t.sls_excl_cd%TYPE,
+       io_trans_group_tbl IN OUT NOCOPY pkg_common_cursors.t_calc_trans_tbl,
+       i_sls_excl_ind     IN            hcrs.prfl_sls_excl_t.over_ind%TYPE,
+       i_thresh           IN            NUMBER,
+       io_contr           IN OUT        BOOLEAN,
+       io_phs_pvp_contr   IN OUT        BOOLEAN,
+       io_phs_contr       IN OUT        BOOLEAN,
+       io_fss_contr       IN OUT        BOOLEAN,
+       io_zero_dllrs      IN OUT        BOOLEAN,
+       io_chk_nom         IN OUT        BOOLEAN,
+       io_chk_hhs         IN OUT        BOOLEAN,
+       i_rebate_no_dsc    IN            BOOLEAN,
+       i_sls_excl_comp_cd IN            VARCHAR2,
+       i_sls_excl_ind_chk IN            hcrs.prfl_sls_excl_t.over_ind%TYPE,
+       i_sls_excl_ind_def IN            hcrs.prfl_sls_excl_t.over_ind%TYPE,
+       i_mark_sls_excl    IN            BOOLEAN,
+       i_mark_comp_typ_cd IN            VARCHAR2,
+       i_accum_comp_dllrs IN            VARCHAR2,
+       i_accum_comp_units IN            VARCHAR2)
+      RETURN BOOLEAN
+   IS
+      /*************************************************************************
+      * Procedure Name : p_check_sls_excl
+      *   Input params : i_sls_excl_cd - Nominal or Sub-PHS sales exclusion
+      *                : io_trans_group_tbl - all lines of a transaction group (orig + adj)
+      *                : i_sls_excl_ind - Retrieved user set sales exclusion value
+      *                : i_thresh -  Threshold for comparison
+      *                : io_contr - Contracted flag
+      *                : io_phs_pvp_contr - PHS Prime Vendor contract flag
+      *                : io_phs_contr - PHS contract flag
+      *                : io_fss_contr - FSS contract flag
+      *                : io_zero_dllrs - Zero Dollar flag
+      *                : io_chk_nom - Check Nominal Flag
+      *                : io_chk_hhs - Check Sub-PHS Flag
+      *                : i_rebate_no_dsc - Rebate with no discount flag
+      *                : i_sls_excl_comp_cd - Compare mode for threshold
+      *                : i_sls_excl_ind_chk - Considered an exclusion if final setting matches this value
+      *                : i_sls_excl_ind_def - Default include/exclude when sales exclusion is first identified
+      *                : i_mark_sls_excl - If TRUE add to sales exclusion log
+      *                : i_mark_comp_type_cd - Mark exclusion transactions in this component
+      *                : i_accum_comp_dllrs - Accumulate exclusion dollars in this component total
+      *                : i_accum_comp_units - Accumulate exclusion units in this component total
+      *  Output params : None are changed
+      *                : io_trans_group_tbl - all lines of a transaction group (orig + adj)
+      *                : io_contr - Contracted flag
+      *                : io_phs_pvp_contr - PHS Prime Vendor contract flag
+      *                : io_phs_contr - PHS contract flag
+      *                : io_fss_contr - FSS contract flag
+      *                : io_zero_dllrs - Zero Dollar flag
+      *                : io_chk_nom - Check Nominal Flag
+      *                : io_chk_hhs - Check Sub-PHS Flag
+      *   Date Created : 04/05/2020
+      *         Author : Mario Gedzior, Joe Kidd
+      *    Description : Checks for transactions to be excluded
+      *
+      * MOD HISTORY
+      *  Date        Modified by   Reason
+      *  ----------  ------------  ---------------------------------------------
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Add NOCOPY to in/out table for performance
+      *************************************************************************/
+      cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.f_is_sls_excl';
+      cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Checks if a transaction qualifies as a exclusion.';
+      v_sls_excl_ind    hcrs.prfl_sls_excl_t.over_ind%TYPE;
+      v_excl            BOOLEAN;
+      v_get_excl_values BOOLEAN;
+      v_chk_excl        BOOLEAN;
+      v_excl_dllrs      NUMBER := 0;
+      v_excl_units      NUMBER := 0;
+      v_excl_prc_pnt    NUMBER;
+      v_chk_prc_pnt     NUMBER;
+   BEGIN
+      -- Initialize sales exlusion ind
+      v_sls_excl_ind := i_sls_excl_ind;
+      -- Note: v_sls_excl_ind will be null unless the transactions has already
+      -- been marked as sales exclusion and the user has set the include/exclude flag
+      IF     v_sls_excl_ind IS NULL
+         AND NVL( i_thresh, 0) > 0
+      THEN
+         -- Never identified as exclusion and threshold exists
+         -- not an exclusion by default, get values, and compare later again after getting values
+         v_excl := FALSE;
+         v_get_excl_values := TRUE;
+         v_chk_excl := TRUE;
+      ELSIF  v_sls_excl_ind IS NULL
+         AND NVL( i_thresh, 0) <= 0
+      THEN
+         -- Never identified as exclusion and threshold does not exist
+         -- Set to non-exclusion, don't get values, don't check for exclusion
+         v_excl := FALSE;
+         v_get_excl_values := FALSE;
+         v_chk_excl := FALSE;
+      ELSIF v_sls_excl_ind IS NOT NULL
+      THEN
+         -- Already identified as exclusion
+         -- Check user value to set exclusion setting, get values, don't check for exclusion
+         v_excl := (v_sls_excl_ind = i_sls_excl_ind_chk);
+         v_get_excl_values := TRUE;
+         v_chk_excl := FALSE;
+      END IF;
+      IF v_get_excl_values
+      THEN
+         -- Calculate dollars and units
+         p_get_trans_vals( io_trans_group_tbl,
+                           i_sls_excl_cd,
+                           NULL,
+                           v_excl_dllrs,
+                           v_excl_units,
+                           v_excl_prc_pnt,
+                           -- These values will not be changed
+                           io_contr,
+                           io_phs_pvp_contr,
+                           io_phs_contr,
+                           io_fss_contr,
+                           io_zero_dllrs,
+                           io_chk_nom,
+                           io_chk_hhs,
+                           i_rebate_no_dsc);
+      END IF;
+      IF v_chk_excl
+      THEN
+         -- Get the sales exclusion price point
+         IF     v_excl_prc_pnt IS NULL
+            AND v_excl_dllrs <> 0
+            AND v_excl_units <> 0
+         THEN
+            v_chk_prc_pnt := ABS( v_excl_dllrs) / ABS( v_excl_units);
+         ELSIF  v_excl_prc_pnt IS NOT NULL
+         THEN
+            v_chk_prc_pnt := v_excl_prc_pnt;
+         END IF;
+         -- Check for excluded sales
+         IF    (    i_sls_excl_comp_cd = pkg_constants.cs_sls_excl_comp_cd_lss
+                AND v_chk_prc_pnt < i_thresh
+               )
+            OR (    i_sls_excl_comp_cd = pkg_constants.cs_sls_excl_comp_cd_leq
+                AND v_chk_prc_pnt <= i_thresh
+               )
+            OR (    i_sls_excl_comp_cd = pkg_constants.cs_sls_excl_comp_cd_equ
+                AND v_chk_prc_pnt = i_thresh
+               )
+            OR (    i_sls_excl_comp_cd = pkg_constants.cs_sls_excl_comp_cd_neq
+                AND v_chk_prc_pnt <> i_thresh
+               )
+            OR (    i_sls_excl_comp_cd = pkg_constants.cs_sls_excl_comp_cd_gtr
+                AND v_chk_prc_pnt > i_thresh
+               )
+            OR (    i_sls_excl_comp_cd = pkg_constants.cs_sls_excl_comp_cd_geq
+                AND v_chk_prc_pnt >= i_thresh
+               )
+         THEN
+            -- It is a sales exclusion
+            v_excl := TRUE;
+         END IF;
+      END IF;
+      IF     i_mark_sls_excl
+         AND v_excl
+      THEN
+         -- Transaction is a sales exclusion
+         -- and the sales exclusions are being marked
+         -- Lookup previous treatment if this is the first time identifying this trans
+         -- otherwiae use the user set value
+         v_sls_excl_ind := f_mark_sls_excl( io_trans_group_tbl,
+                                            v_excl_dllrs,
+                                            v_excl_units,
+                                            i_thresh,
+                                            i_sls_excl_cd,
+                                            v_sls_excl_ind,
+                                            i_sls_excl_ind_def);
+         -- Check exclusion setting vs lookup value
+         v_excl := (v_sls_excl_ind = i_sls_excl_ind_chk);
+      END IF;
+      IF     i_mark_comp_typ_cd IS NOT NULL
+         AND v_excl
+         AND NOT f_is_trans_marked( io_trans_group_tbl, i_mark_comp_typ_cd)
+      THEN
+         -- Accumulate in the passed component
+         p_mark_record
+            (io_trans_group_tbl,
+             v_excl_dllrs,
+             v_excl_units,
+             v_excl_prc_pnt,
+             i_mark_comp_typ_cd,
+             i_sls_excl_cd);
+         IF i_accum_comp_dllrs IS NOT NULL
+         THEN
+            -- Add dollars to component
+            p_comp_val_add( i_accum_comp_dllrs, v_excl_dllrs);
+         END IF;
+         IF i_accum_comp_units IS NOT NULL
+         THEN
+            -- Add units to component
+            p_comp_val_add( i_accum_comp_units, v_excl_units);
+         END IF;
+      END IF;
+      RETURN v_excl;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         p_raise_errors( cs_src_cd, cs_src_descr, SQLCODE, SQLERRM,
+            'Fatal. Error while checking if a transaction is an exclusion.' ||
+            ' TRANS_ID=' || io_trans_group_tbl( io_trans_group_tbl.FIRST()).trans_id);
+   END f_is_sls_excl;
+
+
    PROCEDURE p_accum_trans
-      (io_trans_group_tbl IN OUT pkg_common_cursors.t_calc_trans_tbl,
-       i_trans_group_ttls IN     t_calc_total_rec)
+      (io_trans_group_tbl IN OUT NOCOPY pkg_common_cursors.t_calc_trans_tbl,
+       i_trans_group_ttls IN            t_calc_total_rec)
    IS
       /*************************************************************************
       * Procedure Name : p_accum_trans
@@ -11638,6 +12690,11 @@ AS
       *                            and functions, remove secondary nom/hhs components
       *  03/01/2019  Joe Kidd      CHG-0137941: RITM-1096050: NonFAMP sub-PHS issue
       *                            Correct Nominal/sub-PHS enable/disable
+      *  04/05/2020  M. Gedzior    RITM-1714054: Add SubPHS to Sales Exclusion
+      *              Joe Kidd      Move sales exclusion check and details to f_is_sls_excl
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Sub-PHS check changed from less than to not equal
+      *                            Add NOCOPY to in/out table for performance
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_accum_trans';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Accumulates a transaction into a component.';
@@ -11656,17 +12713,9 @@ AS
       v_zero_dllrs          BOOLEAN;
       v_nom                 BOOLEAN := FALSE; -- Transactions are non-nominal by default
       v_hhs                 BOOLEAN := FALSE; -- Transactions are not sub-PHS by default
-      v_chk_nom             BOOLEAN := FALSE; -- Nominal not checked by default
-      v_nom_thresh          NUMBER;
-      v_get_nom_values      BOOLEAN := FALSE; -- Nominal values not retrieved by default
-      v_nom_dllrs           NUMBER := 0;
-      v_nom_units           NUMBER := 0;
-      v_nom_prc_pnt         NUMBER;
       v_chk_hhs             BOOLEAN := FALSE; -- HHS violations not checked by default
-      v_hhs_thresh          NUMBER;
-      v_hhs_dllrs           NUMBER := 0;
-      v_hhs_units           NUMBER := 0;
-      v_hhs_prc_pnt         NUMBER;
+      v_chk_nom             BOOLEAN := FALSE; -- Nominal not checked by default
+      v_thresh              NUMBER;
    BEGIN
       IF gv_accum_trans
       THEN
@@ -11720,186 +12769,73 @@ AS
                -- the nominal dollars and units on the marked record
                -- Note: sls_excl_ind will be null unless the transactions has already
                -- been marked as nominal and the user has set the include/exclude flag
-               v_nom_thresh := pkg_common_functions.f_get_chk_price( v_trans_group_tbl( v_i).trans_dt, gv_nd_tbl);
-               IF   v_trans_group_tbl( v_i).sls_excl_ind IS NULL
-                AND NVL( v_nom_thresh, 0) > 0
-               THEN
-                  -- Never identified as nominal and threshold exists
-                  -- Non-Nominal by default, get nominal values, check for nominal
-                  v_nom := FALSE;
-                  v_get_nom_values := TRUE;
-                  v_chk_nom := TRUE;
-               ELSIF v_trans_group_tbl( v_i).sls_excl_ind IS NULL
-                 AND NVL( v_nom_thresh, 0) <= 0
-               THEN
-                  -- Never identified as nominal and threshold does not exist
-                  -- Set to non-nominal, don't get nominal values, don't check for nominal
-                  v_nom := FALSE;
-                  v_get_nom_values := FALSE;
-                  v_chk_nom := FALSE;
-               ELSIF v_trans_group_tbl( v_i).sls_excl_ind = pkg_constants.cs_include
-               THEN
-                  -- Already identified as Nominal and user set as non-nominal
-                  -- Set to non-nominal, get nominal values, don't check for nominal
-                  v_nom := FALSE;
-                  v_get_nom_values := TRUE;
-                  v_chk_nom := FALSE;
-               ELSIF v_trans_group_tbl( v_i).sls_excl_ind = pkg_constants.cs_exclude
-               THEN
-                  -- Already identified as Nominal and user set as nominal
-                  -- Set to non-nominal, get nominal values, don't check for nominal
-                  v_nom := TRUE;
-                  v_get_nom_values := TRUE;
-                  v_chk_nom := FALSE;
-               END IF;
-               IF v_get_nom_values
-               THEN
-                  -- Calculate Nominal dollars and units
-                  p_get_trans_vals( v_trans_group_tbl,
-                                    cs_trns_amt_nom_chk,
-                                    NULL,
-                                    v_nom_dllrs,
-                                    v_nom_units,
-                                    v_nom_prc_pnt,
-                                    -- These values will not be changed
-                                    v_contr,
-                                    v_phs_pvp_contr,
-                                    v_phs_contr,
-                                    v_fss_contr,
-                                    v_zero_dllrs,
-                                    v_chk_nom,
-                                    v_chk_hhs,
-                                    v_rebate_no_dsc);
-               END IF;
-               IF v_chk_nom
-               THEN
-                  -- Check for nominal sales
-                  IF   v_nom_prc_pnt IS NULL
-                   AND v_nom_dllrs <> 0
-                   AND v_nom_units <> 0
-                   AND v_nom_thresh > 0
-                   AND ABS( v_nom_dllrs) / ABS( v_nom_units) <= v_nom_thresh
-                  THEN
-                     --------------------------------------------------------------------
-                     -- This is a nominal sale
-                     --------------------------------------------------------------------
-                     -- no price point was passed (null)
-                     -- and the dollar value is not zero (and not null)
-                     -- and the unit value is not zero (and not null)
-                     -- and the nominal threshold is greater than zero (and not null)
-                     -- and the passed price point is less than or equal to the nominal threshold
-                     -- Return TRUE to exclude the rows
-                     v_nom := TRUE;
-                  ELSIF v_nom_prc_pnt IS NOT NULL
-                    AND v_nom_prc_pnt > 0
-                    AND v_nom_thresh > 0
-                    AND v_nom_prc_pnt <= v_nom_thresh
-                  THEN
-                     --------------------------------------------------------------------
-                     -- This is a nominal sale
-                     --------------------------------------------------------------------
-                     -- Price point was passed  (not null)
-                     -- and the passed price point was greater than zero
-                     -- and the nominal threshold is greater than zero (and not null)
-                     -- and the passed price point is less than or equal to the nominal threshold
-                     -- Return TRUE to exclude the rows
-                     v_nom := TRUE;
-                  END IF;
-                  IF v_nom
-                  THEN
-                     -- Price is a nominal, Add to sales exclusions. Default inclusion
-                     -- rule is controlled in the function. The user can override with
-                     -- UI and run calc again. A user override on this or previous
-                     -- profiles can change the nominal flag from this function
-                     v_nom := f_mark_nominal( v_trans_group_tbl,
-                                              v_nom_dllrs,
-                                              v_nom_units,
-                                              v_nom_thresh);
-                  END IF;
-               END IF;
-            END IF; -- Nom
+               v_thresh := pkg_common_functions.f_get_chk_price( v_trans_group_tbl( v_i).trans_dt, gv_nd_tbl);
+               -- A transaction is considered nominal if it is less than or equal to
+               -- the nominal threshold and the user sets them to excluded, they are
+               -- included by default when first identified (assumption is a false
+               -- positive), they are added to sales exclusion log, they are not
+               -- accumulated in a special component
+               v_nom := f_is_sls_excl( hcrs.pkg_constants.cs_sls_excl_cd_nom,
+                                       v_trans_group_tbl,
+                                       v_trans_group_tbl( v_i).sls_excl_ind,
+                                       v_thresh,
+                                       v_contr,
+                                       v_phs_pvp_contr,
+                                       v_phs_contr,
+                                       v_fss_contr,
+                                       v_zero_dllrs,
+                                       v_chk_nom,
+                                       v_chk_hhs,
+                                       v_rebate_no_dsc,
+                                       pkg_constants.cs_sls_excl_comp_cd_leq,
+                                       pkg_constants.cs_exclude,
+                                       pkg_constants.cs_include,
+                                       TRUE,
+                                       NULL,
+                                       NULL,
+                                       NULL);
+            END IF;
             -----------------------------------------------------------------------
             -- HHS violation check
             -----------------------------------------------------------------------
             -- HHS violation rules moved to p_get_trans_vals call above to check all rows
             IF v_chk_hhs
             THEN
-               -- If a HHS check is required always retrieve the nominal threshold
+               -- If a HHS check is required always retrieve the PHS Price
                -- it is needed for the HHS check and to enforce population of
                -- the nominal dollars and units on the marked record
                -- Earned date must be used to retrieve the correct PHS price
-               v_hhs_thresh := pkg_common_functions.f_get_chk_price
-                                  (v_trans_group_tbl( v_i).ndc_lbl,
-                                   v_trans_group_tbl( v_i).ndc_prod,
-                                   v_trans_group_tbl( v_i).ndc_pckg,
-                                   v_trans_group_tbl( v_i).earn_bgn_dt,
-                                   gv_pl102_tbl);
-               IF NVL( v_hhs_thresh, 0) > 0
-               THEN
-                  -- Calculate HHS violation dollars and units
-                  p_get_trans_vals( v_trans_group_tbl,
-                                    cs_trns_amt_hhs_chk,
-                                    NULL,
-                                    v_hhs_dllrs,
-                                    v_hhs_units,
-                                    v_hhs_prc_pnt,
-                                    -- These values will not be changed
-                                    v_contr,
-                                    v_phs_pvp_contr,
-                                    v_phs_contr,
-                                    v_fss_contr,
-                                    v_zero_dllrs,
-                                    v_chk_nom,
-                                    v_chk_hhs,
-                                    v_rebate_no_dsc);
-                  -- Check for HHS violation
-                  IF   v_hhs_prc_pnt IS NULL
-                   AND v_hhs_dllrs <> 0
-                   AND v_hhs_units <> 0
-                   AND v_hhs_thresh > 0
-                   AND ABS( v_hhs_dllrs) / ABS( v_hhs_units) < v_hhs_thresh
-                  THEN
-                     --------------------------------------------------------------------
-                     -- This is a Sub-PHS sale
-                     --------------------------------------------------------------------
-                     -- no price point was passed (null)
-                     -- and the dollar value is not zero (and not null)
-                     -- and the unit value is not zero (and not null)
-                     -- and the PL102 price is greater than zero (and not null)
-                     -- and the dollars divided by units is less than the PL 102 price
-                     v_hhs := TRUE;
-                  ELSIF v_hhs_prc_pnt IS NOT NULL
-                    AND v_hhs_prc_pnt > 0
-                    AND v_hhs_thresh > 0
-                    AND v_hhs_prc_pnt < v_hhs_thresh
-                  THEN
-                     --------------------------------------------------------------------
-                     -- This is a Sub-PHS sale
-                     --------------------------------------------------------------------
-                     -- Price point was passed  (not null)
-                     -- and the passed price point was greater than zero
-                     -- and the PL102 price is greater than zero (and not null)
-                     -- and the passed price point is less than the PL 102 price
-                     v_hhs := TRUE;
-                  END IF;
-               END IF;
-               IF v_hhs
-               THEN
-                  IF NOT f_is_trans_marked( v_trans_group_tbl, pkg_constants.cs_hhs_pl102_violation)
-                  THEN
-                     -- Mark as an HHS violation if is hasn't already been marked
-                     p_mark_record
-                        (v_trans_group_tbl,
-                         v_hhs_dllrs,
-                         v_hhs_units,
-                         v_hhs_prc_pnt,
-                         pkg_constants.cs_hhs_pl102_violation,
-                         TRUE); -- use hhs instead of nom
-                     -- Add units to HHS violation component
-                     p_comp_val_add( pkg_constants.cs_hhs_pl102_violation, v_hhs_units);
-                  END IF;
-               END IF;
-            END IF; -- HHS
+               v_thresh := pkg_common_functions.f_get_chk_price
+                              (v_trans_group_tbl( v_i).ndc_lbl,
+                               v_trans_group_tbl( v_i).ndc_prod,
+                               v_trans_group_tbl( v_i).ndc_pckg,
+                               v_trans_group_tbl( v_i).earn_bgn_dt,
+                               gv_pl102_tbl);
+               -- A transaction is considered sub-PHS if it is not equal to the
+               -- PHS Price threshold and the user sets them to included, they are
+               -- included by default when first identified (false positives are
+               -- rare), they are added to sales exclusion log after Dec 1, 2020,
+               -- and they are accumulated in the HHS Violation component
+               v_hhs := f_is_sls_excl( hcrs.pkg_constants.cs_sls_excl_cd_hhs,
+                                       v_trans_group_tbl,
+                                       v_trans_group_tbl( v_i).sls_excl_ind,
+                                       v_thresh,
+                                       v_contr,
+                                       v_phs_pvp_contr,
+                                       v_phs_contr,
+                                       v_fss_contr,
+                                       v_zero_dllrs,
+                                       v_chk_nom,
+                                       v_chk_hhs,
+                                       v_rebate_no_dsc,
+                                       pkg_constants.cs_sls_excl_comp_cd_neq,
+                                       pkg_constants.cs_include,
+                                       pkg_constants.cs_include,
+                                       gv_mark_sls_excl_hhs,
+                                       pkg_constants.cs_hhs_pl102_violation,
+                                       NULL,
+                                       pkg_constants.cs_hhs_pl102_violation);
+            END IF;
             -----------------------------------------------------------------------
             -- Component marking
             -----------------------------------------------------------------------
@@ -12261,8 +13197,8 @@ AS
 
 
    PROCEDURE p_bndl_trans
-      (io_trans_group_tbl IN OUT pkg_common_cursors.t_calc_trans_tbl,
-       i_trans_group_ttls IN     t_calc_total_rec)
+      (io_trans_group_tbl IN OUT NOCOPY pkg_common_cursors.t_calc_trans_tbl,
+       i_trans_group_ttls IN            t_calc_total_rec)
    IS
       /*************************************************************************
       * Procedure Name : p_bndl_trans
@@ -12376,6 +13312,9 @@ AS
       *                            GTT column reduction
       *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
       *                            Add SAP4H to SAP trans rules
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Restore GTT delete by customer (Oracle 19c Temp Undo)
+      *                            Add NOCOPY to in/out table for performance
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_bndl_trans';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Applies bundling logic to the passed transaction';
@@ -12383,63 +13322,145 @@ AS
       v_i                   BINARY_INTEGER;
       v_cust_id             hcrs.prfl_cust_cls_of_trd_t.cust_id%TYPE;
 
-      PROCEDURE p_run_config
+      FUNCTION f_chk_new_cust
          (i_cust_id IN hcrs.prfl_cust_cls_of_trd_t.cust_id%TYPE)
+         RETURN BOOLEAN
       IS
-         v_timer  NUMBER := 0;
+         v_delete_log BOOLEAN := FALSE;
       BEGIN
-         IF NOT gv_bndl_cust_id_tbl.EXISTS( i_cust_id)
+         IF     cs_bndl_delete_gtt_by_cust
+            AND i_cust_id <> NVL( gv_bndl_cust_id, i_cust_id || '--')
          THEN
-            -- Start timer
-            pkg_utils.p_timer_start( cs_calc_log_cntr_bndl_cfg_time);
-            -- Create the bundle summary and detail records
+            -- We are limiting the GTT by customer and this is a different customer
+            -- Save the new customer and clear GTT
+            gv_bndl_cust_id := i_cust_id;
+            -- Set delete log flag
+            v_delete_log := (gv_bndl_trans_wrk_cnt > 0);
+            -- Clear the counters
+            gv_bndl_cust_id_wrk_tbl.DELETE();
+            gv_bndl_trans_wrk_cnt := 0;
+         END IF;
+         RETURN v_delete_log;
+      END f_chk_new_cust;
+
+      PROCEDURE p_run_config
+         (i_cust_id     IN     hcrs.prfl_cust_cls_of_trd_t.cust_id%TYPE,
+          io_delete_log IN OUT BOOLEAN)
+      IS
+         v_load_gtt BOOLEAN;
+         v_cust     BOOLEAN;
+         v_exec     BOOLEAN;
+         v_timer    NUMBER;
+      BEGIN
+         -- Is the Customer loaded into the GTT?
+         IF NOT gv_bndl_cust_id_wrk_tbl.EXISTS( i_cust_id)
+         THEN
+            -- Register the customer for the bundle config query
             p_set_bndl_cust( i_cust_id);
-            -- Run config query, load GTT, save customer row count
-            gv_bndl_cust_id_tbl( i_cust_id) := pkg_common_cursors.f_ins_bndl_cp_trns();
-            -- End timer
-            v_timer := pkg_utils.f_timer_stop( cs_calc_log_cntr_bndl_cfg_time);
-            -- Commit as needed
-            p_commit( gv_bndl_cust_id_tbl( i_cust_id));
-            -- Add to counters/timers
-            p_set_cntr( cs_calc_log_cntr_bndl_cfg_exec);
-            p_set_cntr( cs_calc_log_cntr_bndl_cfg_rows, gv_bndl_cust_id_tbl( i_cust_id));
-            p_set_cntr( cs_calc_log_cntr_bndl_cfg_time, v_timer);
-            p_set_cntr( cs_calc_log_cntr_bndl_cust_cnt);
+            IF NOT gv_bndl_cust_id_tbl.EXISTS( i_cust_id)
+            THEN
+               -- Customer is NOT already calculated
+               -- Load the GTT with the full config query
+               v_load_gtt := FALSE;
+               -- Add customer to bundle customer counts
+               v_cust := TRUE;
+               -- Exec config query
+               v_exec := TRUE;
+            ELSE
+               -- Customer is already calculated
+               -- Load the GTT from permanent table
+               v_load_gtt := TRUE;
+               -- Don't add customer to bundle customer count
+               v_cust := FALSE;
+               -- Exec config query if customer had bundled trans
+               v_exec := (gv_bndl_cust_id_tbl( i_cust_id) > 0);
+            END IF;
+            IF v_exec
+            THEN
+               -- Start timer
+               pkg_utils.p_timer_start( cs_calc_log_cntr_bndl_cfg_time);
+               -- Run bundle config query, load GTT, save customer row count
+               gv_bndl_cust_id_wrk_tbl( i_cust_id) := pkg_common_cursors.f_ins_bndl_cp_trns( v_load_gtt, io_delete_log);
+               -- End timer
+               v_timer := pkg_utils.f_timer_stop( cs_calc_log_cntr_bndl_cfg_time);
+               p_commit( gv_bndl_cust_id_wrk_tbl( i_cust_id));
+               -- Add to exec to counter/timer
+               gv_bndl_trans_wrk_cnt := gv_bndl_trans_wrk_cnt + gv_bndl_cust_id_wrk_tbl( i_cust_id);
+               p_set_cntr( cs_calc_log_cntr_bndl_cfg_exec);
+               p_set_cntr( cs_calc_log_cntr_bndl_cfg_time, v_timer);
+               IF v_cust
+               THEN
+                  -- Add customer to counters
+                  gv_bndl_cust_id_tbl( i_cust_id) := gv_bndl_cust_id_wrk_tbl( i_cust_id);
+                  p_set_cntr( cs_calc_log_cntr_bndl_cust_cnt);
+                  p_set_cntr( cs_calc_log_cntr_bndl_cfg_rows, gv_bndl_cust_id_tbl( i_cust_id));
+               END IF;
+               -- Clear delete log flag
+               io_delete_log := FALSE;
+            END IF;
          END IF;
       END p_run_config;
 
       PROCEDURE p_create_audit_trail
       IS
-         v_i                   BINARY_INTEGER;
-         v_orig_cust_id        hcrs.prfl_cust_cls_of_trd_t.cust_id%TYPE;
+         v_delete_log BOOLEAN := FALSE;
+         v_i          BINARY_INTEGER;
       BEGIN
          -----------------------------------------------------------------------
          -- first step, create the bundle audit trail
          -----------------------------------------------------------------------
-         -- Run config query
-         p_run_config( v_cust_id);
+         -- Design:
+         --
+         -- "customer" is the primary customer on the current transactions, always the same
+         -- "original customer" is the secondary customer on the current transactions, may be more than one, ICW_KEY rebates
+         --
+         -- 1. Customers are never removed from the GTTs (cs_bndl_delete_gtt_by_cust = FALSE)
+         --   IF the "customer" has not been loaded into the GTT
+         --      Run the config query to add the "customer" to the GTT
+         --   LOOP for each "original customer"
+         --      IF the "original customer" has not been loaded into the GTT
+         --         Run the config query to add the "original customer" to the GTT
+         --
+         -- 2. The GTT is cleared when the customer changes (cs_bndl_delete_gtt_by_cust = TRUE)
+         --   IF the "customer" has changed (or it is the first customer)
+         --      Clear the GTT counters
+         --      IF the GTT has data
+         --         Clear the GTT table
+         --   IF the "customer" has not been loaded into the GTT
+         --      IF the "customer" has NOT been calculated
+         --         Run the config query to add the "customer" to the GTT
+         --      ELSE IF the "customer" has been calculated and has bundled transactions
+         --         Run the config query to load the "customer" from the permanent table into the GTT
+         --   LOOP for each "original customer"
+         --      IF the "original customer" has not been loaded into the GTT
+         --         IF the "original customer" has NOT been calculated
+         --            Run the config query to add the "original customer" to the GTT
+         --         ELSE IF the "original customer" has been calculated and has bundled transactions
+         --            Run the config query to load the "original customer" from the permanent table into the GTT
+         --
          -----------------------------------------------------------------------
-         -- ORIG customers
-         -- Loop through every row in the transaction
-         -- Load bundling for orig customer IDs for ICW_KEY rebates
+         -- Check if this a new customer (different from last customer)
+         v_delete_log := f_chk_new_cust( v_cust_id);
+         -- Run config query for the "customer"
+         p_run_config( v_cust_id, v_delete_log);
+         -----------------------------------------------------------------------
+         -- "original customers"
+         -- Load bundling for the orig customer IDs for ICW_KEY rebates
          v_i := io_trans_group_tbl.FIRST();
          WHILE v_i IS NOT NULL
          LOOP
-            v_orig_cust_id := io_trans_group_tbl( v_i).orig_cust_id;
-            -- If the original customer is different from the main customer
+            -- If the "original customer" is different from the "customer"
             -- and it is a RMUS/CARS customer
-            -- and it has not already been loaded into the GTT
-            -- and the transaction is an SAP or RMUS/CARS transaction
-            IF     v_orig_cust_id <> v_cust_id
-               AND v_orig_cust_id LIKE '%' || pkg_constants.cs_cust_cars
+            -- and the transaction is an SAP/SAP4H or RMUS/CARS transaction
+            IF     io_trans_group_tbl( v_i).orig_cust_id <> v_cust_id
+               AND io_trans_group_tbl( v_i).orig_cust_id LIKE '%' || pkg_constants.cs_cust_cars
                AND io_trans_group_tbl( v_i).source_sys_cde IN (pkg_constants.cs_system_cars,
                                                                pkg_constants.cs_system_sap,
                                                                pkg_constants.cs_system_sap4h)
             THEN
-               -- Run config query
-               p_run_config( v_orig_cust_id);
+               -- Run config query for the "original customer"
+               p_run_config( io_trans_group_tbl( v_i).orig_cust_id, v_delete_log);
             END IF;
-            -- Get next row
             v_i := io_trans_group_tbl.NEXT( v_i);
          END LOOP;
       END p_create_audit_trail;
@@ -12623,14 +13644,15 @@ AS
             AND io_trans_group_tbl( v_i).bndl_prod = pkg_constants.cs_flag_yes
          THEN
             p_set_cntr( cs_calc_log_cntr_bndl_trn_rows, io_trans_group_tbl.COUNT());
-            IF gv_bndl_config
+            -- Calculate the bundle, create the audit trail
+            -- (must always do this when deleting GTT when customer changes)
+            IF    gv_bndl_config
+               OR cs_bndl_delete_gtt_by_cust
             THEN
-               -- Calculate the bundle, create the audit trail
                p_create_audit_trail;
             END IF;
             IF gv_bndl_apply
             THEN
-               -- Create the bundle adjustments
                p_create_adjustments;
             END IF;
          END IF; -- product is a bundled product
@@ -12752,11 +13774,15 @@ AS
       *                            Correct handling of ICW_KEY and other links
       *  03/01/2019  Joe Kidd      CHG-123872: SHIFT SAP
       *                            Add SAP4H to SAP trans rules
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Add Bioverative trans linking rules
+      *                            Move counter update to process trans group
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_trans_rollup_loop';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Performs the transaction rollup loop for calculations';
       cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error while performing the transaction rollup loop for calculations';
       v_trans_fetch_tbl             pkg_common_cursors.t_calc_trans_tbl; -- All transactions from last fetch
+      v_trans_first_rec             pkg_common_cursors.t_calc_trans_rec; -- First transaction in the current group
       v_trans_curr_rec              pkg_common_cursors.t_calc_trans_rec; -- Current transaction being examined
       v_trans_last_rec              pkg_common_cursors.t_calc_trans_rec; -- Last transaction that was examined
       v_trans_group_all_tbl         pkg_common_cursors.t_calc_trans_tbl; -- All transactions for transaction group
@@ -12771,20 +13797,11 @@ AS
       v_first_sap_is_adj_flg        BOOLEAN := FALSE;
       v_c                           BINARY_INTEGER;
       v_total_rows                  NUMBER;
+      v_trans_cnt                   NUMBER;
 
       PROCEDURE p_start_new_trans_group
       IS
       BEGIN
-         IF NOT gv_cust_id_tbl.EXISTS( v_trans_curr_rec.cust_id)
-         THEN
-            -- Register new customer
-            gv_cust_id_tbl( v_trans_curr_rec.cust_id) := 0;
-            p_set_cntr( cs_calc_log_cntr_custs);
-            p_set_cntr( cs_calc_log_cntr_cust_rows, 0, -1); -- reset to zero, use same counter
-         END IF;
-         -- Increment customer transaction count
-         gv_cust_id_tbl( v_trans_curr_rec.cust_id) := gv_cust_id_tbl( v_trans_curr_rec.cust_id) + 1;
-         p_set_cntr( cs_calc_log_cntr_cust_rows);
          -- if group starts with direct sale or indirect sale,
          -- subsequent rebates only accumulate discount
          v_sale_exists_flg := (v_trans_curr_rec.trans_cls_cd IN (pkg_constants.cs_trans_cls_dir,
@@ -12814,6 +13831,7 @@ AS
          v_trans_grp := v_trans_curr_rec.trans_grp;
          -- Store the current transaction info
          -- All dollars/units remain intact
+         v_trans_first_rec := v_trans_curr_rec;
          v_trans_last_rec := v_trans_curr_rec;
          v_trans_group_all_tbl.DELETE();
          v_trans_group_all_tbl( 1) := v_trans_curr_rec;
@@ -12832,11 +13850,6 @@ AS
       PROCEDURE p_add_to_trans_group
       IS
       BEGIN
-         -- Increment customer transaction count
-         gv_cust_id_tbl( v_trans_curr_rec.cust_id) := gv_cust_id_tbl( v_trans_curr_rec.cust_id) + 1;
-         p_set_cntr( cs_calc_log_cntr_cust_rows);
-         -- Increment linked transaction count
-         p_set_cntr( cs_calc_log_cntr_links);
          -- Rebates only accumulate discount when a sale exists, or when
          -- the parent trans group is same and the trans grp > 1 or if
          -- the first trans was an ICW key, the trans grp > 1
@@ -12946,8 +13959,8 @@ AS
             --------------------------------------------------------------------
             -- SAP/SAP4H Linking
             --------------------------------------------------------------------
-            -- SAP/SAP4H marked as original, or first in parent group, or first parent
-            -- group when first invoice is an adjustment
+            -- SAP/SAP4H marked as original, or first in parent group, or first
+            -- parent group when first invoice is an adjustment
             WHEN v_trans_curr_rec.source_sys_cde IN (pkg_constants.cs_system_sap,
                                                      pkg_constants.cs_system_sap4h)
              AND (   v_trans_curr_rec.trans_adj_cd = pkg_constants.cs_trans_adj_original
@@ -12984,6 +13997,45 @@ AS
             THEN
                v_trans_curr_rec.trans_adj_cd := pkg_constants.cs_trans_adj_x360_adj;
             --------------------------------------------------------------------
+            -- BIVVRXC Direct Linking
+            --------------------------------------------------------------------
+            -- BIVVRXC marked as original, or first in parent group, or first
+            -- parent group when first invoice is an adjustment
+            WHEN v_trans_curr_rec.source_sys_cde = pkg_constants.cs_system_bivvrxc
+             AND v_trans_curr_rec.trans_cls_cd = pkg_constants.cs_trans_cls_dir
+             AND (   v_trans_curr_rec.trans_adj_cd = pkg_constants.cs_trans_adj_original
+                  OR v_trans_curr_rec.trans_grp = 1
+                  OR (    v_first_sap_is_adj_flg
+                      AND v_trans_curr_rec.parent_trans_grp = 1
+                     )
+                 )
+            THEN
+               v_trans_curr_rec.trans_adj_cd := pkg_constants.cs_trans_adj_bivv_rollup;
+               v_trans_curr_rec.parent_trans_id := v_root_trans_id;
+            -- Otherwise BIVVRXC Direct is an adjustment
+            WHEN v_trans_curr_rec.source_sys_cde = pkg_constants.cs_system_bivvrxc
+             AND v_trans_curr_rec.trans_cls_cd = pkg_constants.cs_trans_cls_dir
+            THEN
+               v_trans_curr_rec.trans_adj_cd := pkg_constants.cs_trans_adj_bivv_adj;
+            --------------------------------------------------------------------
+            -- BIVVCCG Rebate Linking
+            --------------------------------------------------------------------
+            -- BIVVCCG ICW_KEY Rebate linked to sale (any level) is an ICW_KEY
+            WHEN v_trans_curr_rec.source_sys_cde = pkg_constants.cs_system_bivvccg
+             AND v_trans_curr_rec.trans_cls_cd = pkg_constants.cs_trans_cls_rbt
+             AND v_trans_curr_rec.parent_trans_id_icw_key IS NOT NULL
+             AND v_sale_exists_flg
+            THEN
+               v_trans_curr_rec.trans_adj_cd := pkg_constants.cs_trans_adj_icw_key;
+            -- BIVVCCG ICW_KEY Rebate not linked to sale is a rollup
+            WHEN v_trans_curr_rec.source_sys_cde = pkg_constants.cs_system_bivvccg
+             AND v_trans_curr_rec.trans_cls_cd = pkg_constants.cs_trans_cls_rbt
+             AND v_trans_curr_rec.parent_trans_id_icw_key IS NOT NULL
+             AND NOT v_sale_exists_flg
+            THEN
+               v_trans_curr_rec.trans_adj_cd := pkg_constants.cs_trans_adj_bivv_rollup;
+               v_trans_curr_rec.parent_trans_id := v_root_trans_id;
+            --------------------------------------------------------------------
             -- Prasco Linking
             --------------------------------------------------------------------
             -- Prasco Rebate linked to sale (any level) is a RBT/FEE
@@ -13019,9 +14071,43 @@ AS
       PROCEDURE p_process_trans_group
       IS
       BEGIN
+         v_trans_cnt := v_trans_group_all_tbl.COUNT();
          -- Only process when there is something to process
-         IF v_trans_group_all_tbl.COUNT() > 0
+         IF v_trans_cnt > 0
          THEN
+            --------------------------------------------------------------
+            -- Manage customer and transaction and counts
+            --------------------------------------------------------------
+            IF NOT gv_cust_id_tbl.EXISTS( v_trans_curr_rec.cust_id)
+            THEN
+               -- Register new customer
+               gv_cust_id_tbl( v_trans_curr_rec.cust_id) := 0;
+               p_set_cntr( cs_calc_log_cntr_custs);
+               p_set_cntr( cs_calc_log_cntr_cust_rows, 0, -1); -- reset to zero, use same counter
+            END IF;
+            -- Increment customer transaction count
+            gv_cust_id_tbl( v_trans_curr_rec.cust_id) := gv_cust_id_tbl( v_trans_curr_rec.cust_id) + v_trans_cnt;
+            p_set_cntr( cs_calc_log_cntr_cust_rows, v_trans_cnt);
+            -- Increment linked transaction count
+            p_set_cntr( cs_calc_log_cntr_links, v_trans_cnt - 1);
+            -- Set Max customer row count
+            IF gv_cust_id_tbl( v_trans_curr_rec.cust_id) > gv_mark_cust_row_cnt_max
+            THEN
+               p_set_cntr( cs_calc_log_cntr_cust_rows_max, (gv_cust_id_tbl( v_trans_curr_rec.cust_id) - gv_mark_cust_row_cnt_max));
+               gv_mark_cust_row_cnt_max := gv_cust_id_tbl( v_trans_curr_rec.cust_id);
+            END IF;
+            -----------------------------------------------------------------------
+            -- Log calc events, but only display in session view
+            -----------------------------------------------------------------------
+            -- Add transaciton info to client info for debugging
+            gv_calc_log_client_info := v_trans_first_rec.trans_id || ' ' ||
+                                       v_trans_first_rec.cust_id || ' ' ||
+                                       LTRIM( REPLACE( v_trans_first_rec.orig_cust_id, v_trans_first_rec.cust_id, '') || ' ') ||
+                                       v_trans_first_rec.ndc_lbl || ' ' ||
+                                       v_trans_first_rec.ndc_prod || ' ' ||
+                                       v_trans_first_rec.ndc_pckg;
+            p_set_cntr( cs_calc_log_cntr_rows, v_trans_cnt, NULL, i_calc_log_comp_cd);
+            p_calc_log( 'Calc ' || cs_calc_log_txt_comp_cd, i_calc_log_user_msg, i_calc_log_comp_cd);
             --------------------------------------------------------------
             -- If CARS rebate has no discount, ignore all values
             --------------------------------------------------------------
@@ -13053,7 +14139,7 @@ AS
       --------------------------------------------------------------------------
       -- Set Log interval seconds for performance
       --------------------------------------------------------------------------
-      gv_calc_log_update_interval := 5;
+      gv_calc_log_update_interval := cs_calc_log_update_interval;
       -- Initialize longops counters
       p_init_cntrs();
       LOOP
@@ -13110,17 +14196,6 @@ AS
                p_process_trans_group;
                p_start_new_trans_group;
             END IF;
-            -- Set Max customer row count
-            IF gv_cust_id_tbl( v_trans_curr_rec.cust_id) > gv_mark_cust_row_cnt_max
-            THEN
-               p_set_cntr( cs_calc_log_cntr_cust_rows_max, (gv_cust_id_tbl( v_trans_curr_rec.cust_id) - gv_mark_cust_row_cnt_max));
-               gv_mark_cust_row_cnt_max := gv_cust_id_tbl( v_trans_curr_rec.cust_id);
-            END IF;
-            -----------------------------------------------------------------------
-            -- Log calc events, but only display in session view
-            -----------------------------------------------------------------------
-            p_set_cntr( cs_calc_log_cntr_rows, 1, NULL, i_calc_log_comp_cd);
-            p_calc_log( 'Calc ' || cs_calc_log_txt_comp_cd, i_calc_log_user_msg, i_calc_log_comp_cd);
             -----------------------------------------------------------------------
             -- Get next record index
             -----------------------------------------------------------------------

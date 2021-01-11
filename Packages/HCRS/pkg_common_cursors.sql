@@ -470,6 +470,10 @@ IS
    *                              Remove GTT delete by customer
    *                              Correct hints
    *                              Add normal exception handling (Calc Debug Mode)
+   *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+   *                            f_ins_bndl_cp_trns
+   *                              Remove GTT delete for running calc
+   *                              Fix population of GTT for support
    ****************************************************************************/
 
    -----------------------------------------------------------------------------
@@ -614,7 +618,8 @@ IS
    -- Bundle Insert Statement
    -----------------------------------------------------------------------------
    FUNCTION f_ins_bndl_cp_trns
-      (i_load_gtt IN BOOLEAN := FALSE)
+      (i_load_gtt IN BOOLEAN := FALSE,
+       i_clear_gtt IN BOOLEAN := FALSE)
       RETURN NUMBER;
 
 END pkg_common_cursors;
@@ -796,13 +801,15 @@ IS
 
 
    FUNCTION f_ins_bndl_cp_trns
-      (i_load_gtt IN BOOLEAN := FALSE)
+      (i_load_gtt IN BOOLEAN := FALSE,
+       i_clear_gtt IN BOOLEAN := FALSE)
       RETURN NUMBER
    IS
       /*************************************************************************
       *  Function Name : f_ins_bndl_cp_trns
       *   Input params : i_load_gtt - If TRUE, load the GTT from existing
-      *                :              permanent audit log. ONLY FOR SUPPORT!!
+      *                :              permanent audit log
+      *                : i_clear_gtt - If TRUE, deletes the GTTs before loading
       *  Output params : None
       *        Returns : SQL%ROWCOUNT, number of rows inserted
       *   Date Created : 04/22/2008
@@ -957,24 +964,27 @@ IS
       *                            Remove GTT delete by customer
       *                            Correct hints
       *                            Add normal exception handling (Calc Debug Mode)
+      *  08/01/2020  Joe Kidd      CHG-198490: Bioverativ Integration
+      *                            Remove GTT delete for running calc
+      *                            Fix population of GTT for support
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.f_ins_bndl_cp_trns';
       cs_src_descr CONSTANT hcrs.error_log_t.src_descr%TYPE := 'Creates Bundle Summary and Detail rows';
       cs_cmt_txt   CONSTANT hcrs.error_log_t.cmt_txt%TYPE := 'Error creating Bundle Summary and Detail rows';
       v_cnt                 NUMBER := 0;
    BEGIN
-      --------------------------------------------------------------------------
-      -- Clear the global temp tables
-      --------------------------------------------------------------------------
-      IF     NVL( i_load_gtt, TRUE)
-         AND NOT pkg_common_procedures.f_is_calc_running()
+      IF     NOT pkg_common_procedures.f_is_calc_running()
+         AND NVL( i_load_gtt, TRUE)
       THEN
          -- ONLY FOR SUPPORT!!
          --------------------------------------------------------------------------
          -- Insert Bundling Summary working rows from permanent table
          --------------------------------------------------------------------------
-         DELETE FROM hcrs.prfl_prod_bndl_smry_wrk_t;
-         INSERT INTO hcrs.prfl_prod_bndl_smry_wrk_t
+         -- Always delete and reload
+         DELETE /*+ f_ins_bndl_cp_trns_DSW */
+           FROM hcrs.prfl_prod_bndl_smry_wrk_t;
+         INSERT /*+ f_ins_bndl_cp_trns_ISW */
+           INTO hcrs.prfl_prod_bndl_smry_wrk_t
             (bndl_seq_no,
              cust_id,
              trans_cls_cd,
@@ -1013,7 +1023,7 @@ IS
                    ppbs.perf_trns_cnt,
                    ppbs.perf_dllrs_grs,
                    ppbs.perf_dllrs_dsc
-              FROM TABLE( hcrs.pkg_common_procedures.f_get_bndl_cust( pkg_constants.cs_cond_none_cd)) c,
+              FROM TABLE( hcrs.pkg_common_procedures.f_get_bndl_cust()) c,
                    hcrs.prfl_prod_bndl_smry_t ppbs
              WHERE c.prfl_id = ppbs.prfl_id
                AND c.co_id = ppbs.co_id
@@ -1022,11 +1032,22 @@ IS
                AND c.ndc_pckg = ppbs.ndc_pckg
                AND c.calc_typ_cd = ppbs.calc_typ_cd;
          v_cnt := v_cnt + SQL%ROWCOUNT;
+      END IF;
+      --------------------------------------------------------------------------
+      -- Clear Bundling Detail working table
+      --------------------------------------------------------------------------
+      IF NVL( i_clear_gtt, FALSE)
+      THEN
+         DELETE /*+ f_ins_bndl_cp_trns_DT */
+           FROM hcrs.prfl_prod_bndl_cp_trns_wrk_t;
+      END IF;
+      IF NVL( i_load_gtt, TRUE)
+      THEN
          --------------------------------------------------------------------------
          -- Insert Bundling Detail working rows from permanent table
          --------------------------------------------------------------------------
-         DELETE FROM hcrs.prfl_prod_bndl_cp_trns_wrk_t;
-         INSERT INTO hcrs.prfl_prod_bndl_cp_trns_wrk_t
+         INSERT /*+ f_ins_bndl_cp_trns_ITW */
+           INTO hcrs.prfl_prod_bndl_cp_trns_wrk_t
             (trans_id,
              bndl_seq_no,
              bndl_cd,
@@ -1059,7 +1080,7 @@ IS
          --------------------------------------------------------------------------
          -- Insert Bundling Summary and Detail working rows, permanent Detail Rows
          --------------------------------------------------------------------------
-         INSERT /*+ f_ins_bndl_cp_trns */
+         INSERT /*+ f_ins_bndl_cp_trns_ISTW */
                 ALL
              -- Only write to the permanent detail table if the calculation is running.
              -- This allows debugging of data in production without writes to the permanent tables.
