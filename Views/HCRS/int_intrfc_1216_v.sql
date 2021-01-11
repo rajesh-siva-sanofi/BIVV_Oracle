@@ -57,11 +57,6 @@ AS
    *                            Support SAP4H transactions, add term code, add
    *                            original invoice source system, and others for
    *                            support queries
-   *  08/01/2020  Joe Kidd      CHG-0000000: Bioverativ Integration
-   *                            Add Bioverative RxC Direct Credits, CCG Rebates,
-   *                            and Biogen Medicaid
-   *  08/25/2020  Pravin Hujare CHG-0000000: SHIFT PHASE 2
-   *                            Add company code PR02 to the list of blocked company codes
    ****************************************************************************/
           -- ICW Fields (needed for interface queries)
           z.credit_num,
@@ -233,9 +228,6 @@ AS
                            'X360', 'R',
                            'SAP', 'D',
                            'SAP4H', 'D',
-                           'BIVVRXC', 'D',
-                           'BIVVCCG', 'R',
-                           'BIBBMED', 'R',
                            'GNZ', 'R', -- Are all rebates? Any direct credits?
                            'XENON', 'R',
                            'SNYCARS', 'R',
@@ -266,9 +258,6 @@ AS
                            'X360', iic.orig_ar_doc_dte,
                            'SAP', iic.orig_invce_dte,
                            'SAP4H', iic.orig_invce_dte,
-                           'BIVVRXC', iic.orig_invce_dte,
-                           'BIVVCCG', TO_DATE( NULL, ''),
-                           'BIBBMED', TO_DATE( NULL, ''),
                            'GNZ', TO_DATE( NULL, ''),
                            'XENON', iic.orig_ar_doc_dte,
                            'SNYCARS', TO_DATE( NULL, ''),
@@ -284,9 +273,6 @@ AS
                            'X360', iic.x360_trans_id,
                            'SAP', TO_NUMBER( iic.invce_num),
                            'SAP4H', TO_NUMBER( iic.invce_num),
-                           'BIVVRXC', TO_NUMBER( iic.invce_num),
-                           'BIVVCCG', iic.submitm_num,
-                           'BIBBMED', iic.adj_num,
                            'GNZ', TO_NUMBER( iic.invce_num),
                            'XENON', iic.ar_doc_num,
                            'SNYCARS', iic.submitm_num,
@@ -300,9 +286,6 @@ AS
                            'X360', iic.x360_units_id,
                            'SAP', iic.invce_line_num,
                            'SAP4H', iic.invce_line_num,
-                           'BIVVRXC', iic.invce_line_num,
-                           'BIVVCCG', iic.adj_num,
-                           'BIBBMED', iic.adj_line_num,
                            'GNZ', iic.invce_line_num,
                            'XENON', TO_NUMBER( NULL),
                            'SNYCARS', iic.adj_num,
@@ -316,9 +299,6 @@ AS
                            'X360', iic.orig_x360_trans_id,
                            'SAP', iic.orig_invce_num,
                            'SAP4H', iic.orig_invce_num,
-                           'BIVVRXC', iic.orig_invce_num,
-                           'BIVVCCG', TO_NUMBER( NULL),
-                           'BIBBMED', TO_NUMBER( NULL),
                            'GNZ', TO_NUMBER( NULL),
                            'XENON', iic.orig_ar_doc_num,
                            'SNYCARS', iic.submitem_num_prior,
@@ -328,12 +308,12 @@ AS
                            TO_NUMBER( NULL)) assc_invc_no,
                    TO_NUMBER( NULL) assc_invc_line_no,
                    CASE
-                      -- SAP always uses SAP for original invoice
+                      -- SAP always uses SAP for original invoice (ICW does not populate)
                       WHEN iic.source_sys_cde = 'SAP'
                        AND iic.orig_invce_num IS NOT NULL
                       THEN iic.source_sys_cde
-                      -- Original source system is only populated for SAP4H invoices
-                      -- SAP4H will have SAP4H or SAP for original source system
+                      -- SAP4H will have SAP4H or SAP for original invoice
+                      -- All other source systems do not populate
                       ELSE iic.orig_invce_src_sys_cde
                    END assc_invc_source_sys_cde,
                    iic.contr_id contr_id,
@@ -345,11 +325,10 @@ AS
                    -- pkg_qty, -- see scalar subqueries below
                    -- claim_unit_qty, -- see scalar subqueries below
                    NVL( iic.amt, 0) * -1 total_amt,
-                   CASE
-                      WHEN iic.source_sys_cde IN ('SAP', 'SAP4H', 'BIVVRXC')
-                      THEN NVL( iic.term_disc_pct, 0)
-                      ELSE TO_NUMBER( NULL)
-                   END term_disc_pct,
+                   DECODE( iic.source_sys_cde,
+                           'SAP', NVL( iic.term_disc_pct, 0),
+                           'SAP4H', NVL( iic.term_disc_pct, 0),
+                           TO_NUMBER( NULL)) term_disc_pct,
                    TO_NUMBER( NULL) whls_chrgbck_amt,
                    -- gross_sale_amt, -- see scalar subqueries below
                    TO_NUMBER( NULL) wac_extnd_amt,
@@ -362,20 +341,20 @@ AS
                    -- gross_sale_amt | claim_unit_qty | pkg_qty | lkup_row_cnt | lkup_sales_type_cde
                    SUBSTR(
                    CASE
-                      -- ICW_KEY rebates/fees, non-product rebates/fees, Coverage gap
-                      WHEN iic.related_sales_num IS NOT NULL
-                        OR iic.related_credits_num IS NOT NULL
-                        OR iic.ndc_cde IS NULL
-                        OR iic.ndc_cde LIKE '%000000'
+                      -- CARS transactions (external data rebates, no sales lookup)
+                      WHEN iic.source_sys_cde = 'CARS'
+                       AND (   iic.related_sales_num IS NOT NULL
+                            OR iic.related_credits_num IS NOT NULL
+                            OR iic.ndc_cde IS NULL
+                            OR iic.ndc_cde LIKE '%000000' -- Coverage Gap
+                           )
                       THEN '|0|0|0|0||'
-                      -- RMUS/CARS transactions
-                      -- BIVVCCG - Legacy Bioverativ CCG FLEX transactions
-                      -- SNYCARS - Legacy Sanofi CARS transactions
-                      -- SNYMANUAL - Legacy Sanofi CARS Manual transactions
-                      WHEN iic.source_sys_cde IN ('CARS', 'BIVVCCG', 'SNYCARS', 'SNYMANUAL')
+                      -- CARS transactions (all others)
+                      -- Legacy Sanofi CARS transactions
+                      -- Legacy Sanofi CARS Manual transactions
+                      WHEN iic.source_sys_cde IN ('CARS', 'SNYCARS', 'SNYMANUAL')
                       THEN (
                               -- CARS/SNYCARS/SNYMANUAL credits can be linked to either a UTIL, CUSTSLS or INDIRECT sales record
-                              -- BIVVCCG credits can be linked to a UTIL sales record (there are no CUSTSLS or INDIRECT)
                               -- UTIL uses claim_units so set pkg_qty to zero
                               -- CUSTSLS and INDIRECT uses pkg_units so set claim_units to NULL
                               -- No Parallel hint makes ICW use the correct index on submitm_num, adj_num
@@ -405,10 +384,9 @@ AS
                                      )
                            )
                       -- HCRS transactions
-                      -- BIBBMED - Biogen Medicaid transactions
-                      WHEN iic.source_sys_cde IN ('HCRS', 'BIBBMED')
+                      WHEN iic.source_sys_cde = 'HCRS'
                       THEN (
-                              -- HCRS/BIBBMED credits can be linked to a MEDUTIL sales record
+                              -- HCRS credits can be linked to a MEDUTIL sales record
                               -- No Parallel hint makes ICW use the correct index on adj_num
                               SELECT /*+ NO_PARALLEL( iis ) */
                                      '|' ||
@@ -426,7 +404,7 @@ AS
                                  AND iis.ndc_cde = iic.ndc_cde
                                  AND iis.sales_type_cde = 'MEDUTIL'
                                  AND iis.adj_num = iic.adj_num
-                                 -- HCRS/BIBBMED records come singly or in pairs
+                                 -- HCRS records come singly or in pairs
                                  -- sign of MEDUTIL gross_sale_amt always matches sign of credit amt
                                  AND SIGN( iis.gross_sale_amt) = SIGN( iic.amt)
                            )
@@ -459,12 +437,11 @@ AS
                       THEN '|0|0|0|0||'
                       -- SAP direct credit transactions
                       -- SAP4H direct credit transactions
-                      -- BIVVRXC - Legacy Bioverativ RxCrossroads direct credit transactions
-                      -- GNZ - Legacy Genzyme direct credit transactions
-                      -- SNYJDE - Legacy Sanofi JDE direct credit transactions
+                      -- Legacy Genzyme direct credit transactions
+                      -- Legacy Sanofi JDE direct credit transactions
                       -- COSMIS direct credit transactions
                       -- No sales lookup, set to gross sales and claim units to null, packages to zero
-                      WHEN iic.source_sys_cde IN ('SAP', 'SAP4H', 'BIVVRXC', 'GNZ','SNYJDE', 'COSMIS')
+                      WHEN iic.source_sys_cde IN ('SAP', 'SAP4H', 'GNZ','SNYJDE', 'COSMIS')
                       THEN '|||0|0||'
                       -- XENON transactions (archived and discontinued)
                       WHEN iic.source_sys_cde = 'XENON'
@@ -512,19 +489,18 @@ AS
                    END, 1, 100) from_sales
               FROM hcrs.icw2_intrpd_credits_v iic
                 -- Eliminate non-US companys (easier to delete extra data for new companies)
-             WHERE iic.co_cde NOT IN ('------',
-                                      --'0901', -- Sanofi US Services Inc.
-                                      --'1209', -- Sanofi US Corporation
-                                      --'2039', -- sanofi-aventis U.S. LLC
-                                      --'2100', -- Merrell Pharma Inc.
-                                      '2106',   -- Aventis Pharma, Inc (PR)
-                                      --'2123', -- Blue Ridge Laboratories
-                                      --'5100', -- Genzyme Corporation
-                                      --'9338', -- Sanofi-Synthelabo Inc
-                                      'PR02', -- Sanofi PR
-                                      --'US03', -- Genzyme Corporation US
-                                      --'US12', -- Bioverativ US
-                                      '------')
+             WHERE iic.co_cde NOT IN ('0002', -- Dermik Laboratories Inc Parsippany
+                                      '0100', -- Aventis Pharma Products I Parsippany
+                                      '0238', -- Dermik Labs Canada Inc Laval
+                                      '0609', -- sanofi-aventis Canada Inc Laval
+                                      '2084', -- sanofi-aventis Pharm Laval
+                                      '2106', -- Aventis Pharma, Inc (PR) Lainate
+                                      '9905') -- Rhodiapharm Inc Laval
+                                      --'0901', -- sanofi-aventis U.S. Bridgewater
+                                      --'2039', -- sanofi-aventis U.S. LLC Bridgewater
+                                      --'2100', -- Merrell Pharma Inc. Reading
+                                      --'2123', -- Blue Ridge Lavboratories Kansas City
+                                      --'9338') -- Sanofi-Synthelabo Inc Bridgewater
                 -- No chargeback credits
                AND iic.type_cde <> 'CAC'
                 -- Block Genzyme manual data for SPM source/sales code
