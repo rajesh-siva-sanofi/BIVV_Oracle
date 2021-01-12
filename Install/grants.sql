@@ -35,6 +35,7 @@ BEGIN
       IF a_user = 'HCRS' THEN
          -- sequence rights
          EXECUTE IMMEDIATE 'GRANT SELECT ON hcrs.check_s TO BIVV'; 
+         EXECUTE IMMEDIATE 'GRANT SELECT ON hcrs.prfl_s TO BIVV'; 
          EXECUTE IMMEDIATE 'GRANT SELECT ON hcrs.check_apprvl_grp_seq TO BIVV';
          EXECUTE IMMEDIATE 'GRANT EXECUTE ON hcrs.pkg_load_bivv_medi_data TO BIVV';
       END IF;
