@@ -1,8 +1,8 @@
 CREATE OR REPLACE PACKAGE HCRS.pkg_load_bivv_medi_data AS
 
-   PROCEDURE p_main (a_clean_flg VARCHAR2 DEFAULT 'Y');
-
---   PROCEDURE p_cleanup_data;
+   PROCEDURE p_run_phase1 (a_clean_flg VARCHAR2 DEFAULT 'Y');
+   PROCEDURE p_run_phase2 (a_clean_flg VARCHAR2 DEFAULT 'Y');
+   PROCEDURE p_run_phase3 (a_clean_flg VARCHAR2 DEFAULT 'Y');
 
 END;
 /
@@ -803,7 +803,7 @@ EXCEPTION
 END p_load_iqvia_data;
 -------------------------p_cleanup_data----------------------
 
-PROCEDURE p_cleanup_data IS
+PROCEDURE p_cleanup_claims_data IS
    v_module    bivv.conv_log_t.module%TYPE := 'p_cleanup_data';
 
    v_appgrp_cnt      NUMBER := 0;
@@ -902,14 +902,6 @@ BEGIN
       AND reb_clm_seq_no = 1;
    bivv.pkg_util.p_saveLog('Deleted from REB_CLAIM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
-   DELETE FROM hcrs.pur_final_results_t t
-   WHERE t.ndc_lbl = c_bivv_ndc_lbl;
-   bivv.pkg_util.p_saveLog('Deleted from PROD_MSTR_PGM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
-
-   DELETE FROM hcrs.prod_mstr_pgm_t
-   WHERE ndc_lbl = c_bivv_ndc_lbl;
-   bivv.pkg_util.p_saveLog('Deleted from PROD_MSTR_PGM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
-
    DELETE FROM hcrs.bivv_claim_hist_t;
    bivv.pkg_util.p_saveLog('Deleted from BIVV_CLAIM_HIST_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
@@ -923,22 +915,95 @@ EXCEPTION
    WHEN OTHERS THEN
       ROLLBACK;
       RAISE;
-END p_cleanup_data;
+END;
 
-PROCEDURE p_main (a_clean_flg VARCHAR2 DEFAULT 'Y') IS
-  v_module    bivv.conv_log_t.module%TYPE := 'p_main';
+/*
+   Phase 2: 
+   1. Product/Program eligibility load
+*/
+PROCEDURE p_run_phase1 (a_clean_flg VARCHAR2 DEFAULT 'Y') IS
+  v_module    bivv.conv_log_t.module%TYPE := 'p_run_phase1';
 
 BEGIN
 
    bivv.pkg_util.p_saveLog('START', c_program, v_module);
 
    IF nvl(a_clean_flg, 'Y') = 'Y' THEN
-      p_cleanup_data;
+
+      DELETE FROM hcrs.prod_mstr_pgm_t t
+      WHERE t.ndc_lbl = c_bivv_ndc_lbl;
+
+      bivv.pkg_util.p_saveLog('Deleted from PROD_MSTR_PGM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+      
    END IF;
 
-   -- proceed to loading the data
+   -- proceed to load the data
    p_load_prod_pgm;
+
+   COMMIT;
+
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+   
+EXCEPTION
+   WHEN OTHERS THEN
+      ROLLBACK;
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+END;
+
+/*
+   Phase 2: 
+   1. URA load
+*/
+PROCEDURE p_run_phase2 (a_clean_flg VARCHAR2 DEFAULT 'Y') IS
+  v_module    bivv.conv_log_t.module%TYPE := 'p_run_phase2';
+
+BEGIN
+
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   IF nvl(a_clean_flg, 'Y') = 'Y' THEN
+
+      DELETE FROM hcrs.pur_final_results_t t
+      WHERE t.ndc_lbl = c_bivv_ndc_lbl;
+
+      bivv.pkg_util.p_saveLog('Deleted from PUR_FINAL_RESULTS_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+      
+   END IF;
+
+   -- proceed to load the data
    p_load_pur_results;
+
+   COMMIT;
+
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+   
+EXCEPTION
+   WHEN OTHERS THEN
+      ROLLBACK;
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+END;
+
+/*
+   Phase 3: 
+   1. Claims load
+   2. URA delta (TBD)
+*/
+PROCEDURE p_run_phase3 (a_clean_flg VARCHAR2 DEFAULT 'Y') IS
+  v_module    bivv.conv_log_t.module%TYPE := 'p_run_phase3';
+
+BEGIN
+
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   IF nvl(a_clean_flg, 'Y') = 'Y' THEN
+      p_cleanup_claims_data;
+   END IF;
+
+   -- proceed to load the data
    p_load_reb_claim;
    p_load_reb_claim_line;
    p_load_reb_valid_claim;
@@ -949,9 +1014,10 @@ BEGIN
    p_load_check_appr_grp;
    p_load_iqvia_data;
 
+   COMMIT;
+
    bivv.pkg_util.p_saveLog('END', c_program, v_module);
-   -- only commit manually after reviewing results.
-   --Commit;
+
 EXCEPTION
    WHEN OTHERS THEN
       ROLLBACK;
@@ -959,5 +1025,6 @@ EXCEPTION
       bivv.pkg_util.p_saveLog('END', c_program, v_module);
 
 END;
+
 END;
 /
