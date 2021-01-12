@@ -1,89 +1,63 @@
 CREATE OR REPLACE PACKAGE BIVV.pkg_stg_medi AS
 
-   PROCEDURE p_main (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y');
+   PROCEDURE p_run_phase1 (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y');
+   PROCEDURE p_run_phase2 (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y');
+   PROCEDURE p_run_phase3 (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y');
+
 END;
 /
 CREATE OR REPLACE PACKAGE BODY BIVV.pkg_stg_medi AS
 
-   c_program   CONSTANT conv_log_t.program%TYPE := 'BIVV.PKG_STG_MEDI';
-   c_userid_BIVV  CONSTANT hcrs.user_t.user_id%TYPE := 'BIVV';
+   c_program      CONSTANT conv_log_t.program%TYPE := 'BIVV.PKG_STG_MEDI';
+   c_userid_BIVV  CONSTANT reb_claim_t.mod_by%TYPE := 'BIVV';
 
    E_InvalidData EXCEPTION;
 
 /*
+   Validates product/program eligibility data
 */
-PROCEDURE p_validate IS
+PROCEDURE p_validate (av_object VARCHAR2, av_msg IN OUT VARCHAR2) IS
 
    v_module    conv_log_t.module%TYPE := 'p_validate';
-   v_msg    VARCHAR2 (4000);
+   v_sql    VARCHAR2(4000);
    v_cnt    NUMBER;
    
 BEGIN
 
    pkg_util.p_saveLog('START', c_program, v_module);
 
+   v_sql := 'SELECT COUNT(*) FROM '||av_object||' WHERE nvl(val_msg, ''OK'') LIKE ''ERR%''';
+
+   EXECUTE IMMEDIATE v_sql  INTO v_cnt; 
+   
+   pkg_util.p_saveLog('Non valid count for '||av_object||': '||v_cnt, c_program, v_module);
+
+   IF v_cnt > 0 THEN
+      av_msg := CASE WHEN av_msg IS NOT NULL THEN av_msg||', ' END || av_object;
+   END IF;
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      RAISE;
+END;
+/*
+   Validates product/program eligibility data
+*/
+PROCEDURE p_validate_prodelig IS
+
+   v_module    conv_log_t.module%TYPE := 'p_validate_prodelig';
+   v_msg    VARCHAR2 (4000);
+--   v_cnt    NUMBER;
+   
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+
    -- validate product program associations
-   SELECT COUNT(*) INTO v_cnt
-   FROM BIVV_PGM_PROD_VAL_V v
-   WHERE nvl(v.val_msg, 'OK') LIKE 'ERR%';
-   
-   pkg_util.p_saveLog('Non valid count for BIVV_PGM_PROD_VAL_V: '||v_cnt, c_program, v_module);
-
-   IF v_cnt > 0 THEN
-      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_PGM_PROD_VAL_V';
-   END IF;
-
-   -- validate claim headers
-   SELECT COUNT(*) INTO v_cnt
-   FROM BIVV_MEDI_CLAIM_VAL_V v
-   WHERE nvl(v.val_msg, 'OK') LIKE 'ERR%';
-   
-   pkg_util.p_saveLog('Non valid count for BIVV_MEDI_CLAIM_V: '||v_cnt, c_program, v_module);
-
-   IF v_cnt > 0 THEN
-      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_MEDI_CLAIM_V';
-   END IF;
-
-   -- validate all claim lines
-   SELECT COUNT(*) INTO v_cnt
-   FROM BIVV_MEDI_CLAIM_LINE_VAL_V v
-   WHERE nvl(v.val_msg, 'OK') LIKE 'ERR%';
-   pkg_util.p_saveLog('Non valid count for BIVV_MEDI_CLAIM_LINE_V: '||v_cnt, c_program, v_module);
-
-   IF v_cnt > 0 THEN
-      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_MEDI_CLAIM_LINE_V';
-   END IF;
-
-   -- validate all paid lines
-   SELECT COUNT(*) INTO v_cnt
-   FROM BIVV_MEDI_PAID_LINE_VAL_V v
-   WHERE nvl(v.val_msg, 'OK') LIKE 'ERR%';
-   pkg_util.p_saveLog('Non valid count for BIVV_MEDI_PAID_LINE_V: '||v_cnt, c_program, v_module);
-
-   IF v_cnt > 0 THEN
-      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_MEDI_PAID_LINE_V';
-   END IF;
-
-   -- validate disputed lines view
-   SELECT COUNT(*) INTO v_cnt
-   FROM BIVV_DSPT_VAL_V v
-   WHERE nvl(v.val_msg, 'OK') LIKE 'ERR%';   
-   pkg_util.p_saveLog('Non valid count for BIVV_DSPT_VAL_V: '||v_cnt, c_program, v_module);
-
-   IF v_cnt > 0 THEN
-      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_DSPT_VAL_V';
-   END IF;
-
-   -- validate URAs
-   SELECT COUNT(*) INTO v_cnt
-   FROM BIVV_PUR_FINAL_RESULTS_VAL_V v
-   WHERE nvl(v.val_msg, 'OK') LIKE 'ERR%';
-   
-   pkg_util.p_saveLog('Non valid count for BIVV_PUR_FINAL_RESULTS_VAL_V: '||v_cnt, c_program, v_module);
-
-   IF v_cnt > 0 THEN
-      v_msg := CASE WHEN v_msg IS NOT NULL THEN v_msg||', ' END || 'BIVV_PUR_FINAL_RESULTS_VAL_V';
-   END IF;
+   p_validate ('BIVV_PGM_PROD_VAL_V', v_msg);
 
    IF length(v_msg) > 0 THEN
       RAISE E_InvalidData;
@@ -101,6 +75,85 @@ EXCEPTION
       pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
       RAISE;
 END;
+
+/*
+   Validates URA data
+*/
+PROCEDURE p_validate_ura IS
+
+   v_module    conv_log_t.module%TYPE := 'p_validate_ura';
+   v_msg    VARCHAR2 (4000);
+--   v_cnt    NUMBER;
+   
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+
+   -- validate URAs
+   p_validate ('BIVV_PUR_FINAL_RESULTS_VAL_V', v_msg);
+
+   IF length(v_msg) > 0 THEN
+      RAISE E_InvalidData;
+   END IF;
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN E_InvalidData THEN
+      pkg_util.p_saveLog('Invalid data in: '||v_msg, c_program, v_module);
+      pkg_util.p_saveLog('END', c_program, v_module);
+      RAISE;
+
+   WHEN OTHERS THEN
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      RAISE;
+END;
+
+/* 
+   Validates claims data
+*/
+PROCEDURE p_validate_claims IS
+
+   v_module    conv_log_t.module%TYPE := 'p_validate_claims';
+   v_msg    VARCHAR2 (4000);
+--   v_cnt    NUMBER;
+   
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+
+   -- validate product program associations
+   p_validate ('BIVV_PGM_PROD_VAL_V', v_msg);
+
+   -- validate claim headers
+   p_validate ('BIVV_MEDI_CLAIM_VAL_V', v_msg);
+
+   -- validate all claim lines
+   p_validate ('BIVV_MEDI_CLAIM_LINE_VAL_V', v_msg);
+
+   -- validate all paid lines
+   p_validate ('BIVV_MEDI_PAID_LINE_VAL_V', v_msg);
+
+   -- validate disputed lines view
+   p_validate ('BIVV_DSPT_VAL_V', v_msg);
+
+   IF length(v_msg) > 0 THEN
+      RAISE E_InvalidData;
+   END IF;
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN E_InvalidData THEN
+      pkg_util.p_saveLog('Invalid data in: '||v_msg, c_program, v_module);
+      pkg_util.p_saveLog('END', c_program, v_module);
+      RAISE;
+
+   WHEN OTHERS THEN
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      RAISE;
+END;
+
 /*
 Target Table:reb_claim_t
 Source object:bivv_medi_claim_v
@@ -763,8 +816,8 @@ EXCEPTION
       pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
       RAISE;
 END;
---------------------------------------------------- URA CALC-----------------------------------------------------
-PROCEDURE p_load_ura_calc IS
+--------------------------------------------------- URAs -----------------------------------------------------
+PROCEDURE p_load_ura IS
    v_module    conv_log_t.module%TYPE := 'p_load_ura_calc';
 BEGIN
    pkg_util.p_saveLog('START', c_program, v_module);
@@ -808,13 +861,14 @@ EXCEPTION
    WHEN OTHERS THEN
       pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
       RAISE;
-END p_load_ura_calc;
+END;
 
 /*
-Truncates all the MEDICLAIM related BIVV Staging table and calls the procedures to load medicalim data
+   Perform BIVV phase 1 activities:
+      1. Product/Program eligibility load
 */
-PROCEDURE p_main (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y') IS
-   v_module    conv_log_t.module%TYPE := 'p_main';
+PROCEDURE p_run_phase1 (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y') IS
+   v_module    conv_log_t.module%TYPE := 'p_run_phase1';
 BEGIN
 
    pkg_util.p_saveLog('START', c_program, v_module);
@@ -822,7 +876,84 @@ BEGIN
 
    -- validate source data
    IF nvl(a_valid_flg, 'Y') = 'Y' THEN
-      p_validate;
+      p_validate_prodelig;
+   END IF;
+
+   -- truncate all stage tables to prepare for new load if requested
+   IF nvl(a_trunc_flg, 'Y') = 'Y' THEN
+      pkg_util.p_trunc_tbl('PROD_MSTR_PGM_T');   
+   END IF;
+
+   -- proceed to loading the data
+   p_load_prod_pgm;
+
+   COMMIT;
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN E_InvalidData THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('END', c_program, v_module);
+
+   WHEN OTHERS THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+END;
+
+/*
+   Perform BIVV phase 1 activities:
+      1. migrates product/program eligibilit
+*/
+PROCEDURE p_run_phase2 (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y') IS
+   v_module    conv_log_t.module%TYPE := 'p_run_phase2';
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+   pkg_util.p_saveLog('Parameters passed -> a_trunc_flg:'||a_trunc_flg||', a_valid_flg:'||a_valid_flg, c_program, v_module);
+
+   -- validate source data
+   IF nvl(a_valid_flg, 'Y') = 'Y' THEN
+      p_validate_ura;
+   END IF;
+
+   -- truncate all stage tables to prepare for new load if requested
+   IF nvl(a_trunc_flg, 'Y') = 'Y' THEN
+      pkg_util.p_trunc_tbl('PUR_FINAL_RESULTS_T');
+   END IF;
+
+   -- proceed to loading the data
+   p_load_ura;
+
+   COMMIT;
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN E_InvalidData THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('END', c_program, v_module);
+
+   WHEN OTHERS THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+END;
+
+/*
+   Perform BIVV phase 3 activities:
+      1. migrates claims
+      2. delta URAs (TBD)
+*/
+PROCEDURE p_run_phase3 (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y') IS
+   v_module    conv_log_t.module%TYPE := 'p_run_phase3';
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+   pkg_util.p_saveLog('Parameters passed -> a_trunc_flg:'||a_trunc_flg||', a_valid_flg:'||a_valid_flg, c_program, v_module);
+
+   -- validate source data
+   IF nvl(a_valid_flg, 'Y') = 'Y' THEN
+      p_validate_claims;
    END IF;
 
    -- truncate all stage tables to prepare for new load if requested
@@ -839,22 +970,18 @@ BEGIN
       pkg_util.p_trunc_tbl('VALID_CLAIM_T');
       pkg_util.p_trunc_tbl('REB_CLM_LN_ITM_T');
       pkg_util.p_trunc_tbl('REB_CLAIM_T');
-      pkg_util.p_trunc_tbl('PUR_FINAL_RESULTS_T');
-      pkg_util.p_trunc_tbl('PROD_MSTR_PGM_T');   
    END IF;
 
    -- proceed to loading the data
-      p_load_prod_pgm;
-      p_load_reb_claim;
-      p_load_reb_claim_line;
-      p_load_reb_valid_claim;
-      p_load_reb_dspt_claim;
-      p_load_check_req_tbl;  
-      p_load_check_t_tbl;
-      p_load_check_appr_grp;
-      p_load_ura_calc;
+   p_load_reb_claim;
+   p_load_reb_claim_line;
+   p_load_reb_valid_claim;
+   p_load_reb_dspt_claim;
+   p_load_check_req_tbl;  
+   p_load_check_t_tbl;
+   p_load_check_appr_grp;
 
---   Commit;
+   COMMIT;
 
    pkg_util.p_saveLog('END', c_program, v_module);
 
