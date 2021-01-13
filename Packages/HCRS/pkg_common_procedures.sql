@@ -1696,7 +1696,7 @@ AS
    gv_mark_cust_row_cnt_max        NUMBER;
 
    -- Marked sales exclusion records cache, ID lookup
-   gv_mark_sls_excl_hhs            BOOLEAN := (SYSDATE >= TO_DATE( '01/01/2021', 'MM/DD/YYYY'));
+   gv_mark_sls_excl_hhs            BOOLEAN := FALSE; -- Disabled until business approves activation
    gv_mark_sls_excl_tbl            t_mark_sls_excl_tbl;
    gv_mark_sls_excl_id_tbl         t_mark_sls_excl_id_tbl;
 
