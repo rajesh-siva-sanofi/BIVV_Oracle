@@ -1030,7 +1030,8 @@ IS
                AND c.ndc_lbl = ppbs.ndc_lbl
                AND c.ndc_prod = ppbs.ndc_prod
                AND c.ndc_pckg = ppbs.ndc_pckg
-               AND c.calc_typ_cd = ppbs.calc_typ_cd;
+               AND c.calc_typ_cd = ppbs.calc_typ_cd
+               AND c.cust_id = ppbs.cust_id;
          v_cnt := v_cnt + SQL%ROWCOUNT;
       END IF;
       --------------------------------------------------------------------------
@@ -1056,7 +1057,7 @@ IS
             SELECT /*+ NO_MERGE
                        LEADING( c ppbsw ppbct )
                        USE_NL( c ppbsw ppbct )
-                       FULL( ppbsw )
+                       INDEX( ppbsw hcrs.prfl_prod_bndl_smry_wrk_ix2 )
                        INDEX( ppbct prfl_prod_bndl_cp_trns_ix1 )
                        DYNAMIC_SAMPLING( 0 )
                    */
@@ -1068,7 +1069,8 @@ IS
               FROM TABLE( hcrs.pkg_common_procedures.f_get_bndl_cust( pkg_constants.cs_cond_none_cd)) c,
                    hcrs.prfl_prod_bndl_smry_wrk_t ppbsw,
                    hcrs.prfl_prod_bndl_cp_trns_t ppbct
-             WHERE c.prfl_id = ppbct.prfl_id
+             WHERE c.cust_id = ppbsw.cust_id
+               AND c.prfl_id = ppbct.prfl_id
                AND c.co_id = ppbct.co_id
                AND c.ndc_lbl = ppbct.ndc_lbl
                AND c.ndc_prod = ppbct.ndc_prod

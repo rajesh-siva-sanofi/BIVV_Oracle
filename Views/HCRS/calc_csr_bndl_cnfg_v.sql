@@ -635,14 +635,16 @@ AS
             AND z.src_tbl_iis = rt.src_tbl_cd (+)
             AND z.related_sales_id = rt.unique_id (+)
              -----------------------------------------------------
+             -- Only continue if there are transactions on bundled price groups
+             -----------------------------------------------------
+            AND z.bndl_price_grp > 0
+             -----------------------------------------------------
              -- Partition pruning - THESE MAKE A HUGE DIFFERENCE!!
              -----------------------------------------------------
              -- Related sale/credit will be paid on or before linked credit was paid
             AND (z.paid_dt + z.prune_days) >= rt.paid_dt (+)
              -- Related sale/credit will be paid on or after linked credit was earned
             AND (z.earn_bgn_dt - z.prune_days) <= rt.paid_dt (+)
-             -- Only continue if there are transactions on bundled price groups
-            AND z.bndl_price_grp > 0
         ),
         p5
      AS (-- P5 - Trans: Get parent RMUS/CARS chargeback for rebates and root SAP/SAP4H sales
@@ -1174,7 +1176,7 @@ AS
                 z.trans_id,
                 CASE
                    --------------------------------------------------------------------
-                   -- ATR: Additional pricing period requirements:
+                   -- Additional pricing period requirements:
                    -- 6.1. The transaction's contract and price group must be
                    --      assigned to the bundle code.
                    -- 6.2. The transaction's earned date must be within the
@@ -1184,7 +1186,7 @@ AS
                     AND z.bndl_price_grp IS NOT NULL
                    THEN 1
                    --------------------------------------------------------------------
-                   -- ATR: Additional performance period requirements:
+                   -- Additional performance period requirements:
                    -- 7.1. The transaction's contract and price group may be
                    --      any contract and price group.
                    -- 7.2. The transaction's earned date must be within the
@@ -1198,7 +1200,7 @@ AS
                 z.dllrs_grs,
                 z.dllrs_dsc,
                 --------------------------------------------------------------------
-                -- PNC: Additional requirements
+                -- Additional requirements
                 -- 8.2. There must be transactions using an NDC in the main
                 --      calculation in the pricing or performance period.
                 --      Those transactions must occur during the range of

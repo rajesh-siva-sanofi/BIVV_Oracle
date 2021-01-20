@@ -5317,10 +5317,6 @@ AS
              o_bad_nom_cnt,
              o_bad_hhs_cnt
         FROM hcrs.prfl_prod_calc_comp_def2_wrk_t t;
-      -- Temporarily disable these checks:
-      o_bad_trans_cnt := 0;
-      o_bad_nom_cnt := 0;
-      o_bad_hhs_cnt := 0;
    EXCEPTION
       WHEN OTHERS
       THEN
@@ -8018,7 +8014,6 @@ AS
       *  03/01/2019  Joe Kidd      CHG-0137941: RITM-1096050: NonFAMP sub-PHS issue
       *                            Correct Nominal/sub-PHS enable/disable
       *                            Add normal exception handling (Calc Debug Mode)
-      *  08/01/2020  Joe Kidd      RITM-2009820: GPO Custom Group Bundling Changes
       *                            Matrix GTT now loaded in multiple passes
       *************************************************************************/
       cs_src_cd    CONSTANT hcrs.error_log_t.src_cd%TYPE := cs_src_pkg || '.p_mk_mtrx_splt_bndl_wrk_t';
