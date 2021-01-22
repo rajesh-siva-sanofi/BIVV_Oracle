@@ -8,8 +8,9 @@ END;
 /
 CREATE OR REPLACE PACKAGE BODY HCRS.pkg_load_bivv_medi_data AS
 
-  c_program   CONSTANT bivv.conv_log_t.program%TYPE := 'HCRS.PKG_LOAD_BIVV_MEDI_DATA';
-  c_bivv_ndc_lbl   constant hcrs.reb_claim_t.ndc_lbl%TYPE :='71104';
+   c_program      CONSTANT bivv.conv_log_t.program%TYPE := 'HCRS.PKG_LOAD_BIVV_MEDI_DATA';
+   c_bivv_ndc_lbl CONSTANT hcrs.reb_claim_t.ndc_lbl%TYPE :='71104';
+   c_source_id    CONSTANT VARCHAR2(4) := 'BIVV';
 
 ----------------------p_load_reb_claim---------------------
 PROCEDURE p_load_reb_claim IS
@@ -636,7 +637,7 @@ PROCEDURE p_load_iqvia_data IS
 BEGIN
    bivv.pkg_util.p_saveLog('START', c_program, v_module);
 
-   INSERT INTO hcrs.bivv_claim_hist_t (
+   INSERT INTO hcrs.claim_hist_t (
       load_dt,
       src,
       co_id,
@@ -685,7 +686,8 @@ BEGIN
       final_run_dt,
       due_dt,
       mod_by,
-      util_rec_typ)
+      util_rec_typ,
+      source_id)
    SELECT
       sysdate load_dt,
       src,
@@ -735,11 +737,12 @@ BEGIN
       final_run_dt,
       due_dt,
       mod_by,
-      util_rec_typ
+      util_rec_typ,
+      source_id
    FROM hcrs.bivv_claim_hist_v;
    bivv.pkg_util.p_saveLog('Inserted BIVV_CLAIM_HIST_T count: '||SQL%ROWCOUNT, c_program, v_module);
 
-   INSERT INTO hcrs.bivv_pymnt_hist_t (
+   INSERT INTO hcrs.pymnt_hist_t (
       load_dt,
       co_id,
       state_cd,
@@ -764,7 +767,8 @@ BEGIN
       check_req_stat_cd,
       check_status,
       check_group_id,
-      check_group_desc)
+      check_group_desc,
+      source_id)
    SELECT
      sysdate as load_dt,
      co_id,
@@ -790,7 +794,8 @@ BEGIN
      check_req_stat_cd,
      check_status,
      check_group_id,
-     check_group_desc
+     check_group_desc,
+     source_id
    FROM hcrs.bivv_pymnt_hist_v;
    bivv.pkg_util.p_saveLog('Inserted BIVV_PYMNT_HIST_T count: '||SQL%ROWCOUNT, c_program, v_module);
 
@@ -801,8 +806,9 @@ EXCEPTION
       bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
       RAISE;
 END p_load_iqvia_data;
+/*
 -------------------------p_cleanup_data----------------------
-
+*/
 PROCEDURE p_cleanup_claims_data IS
    v_module    bivv.conv_log_t.module%TYPE := 'p_cleanup_data';
 
@@ -902,15 +908,18 @@ BEGIN
       AND reb_clm_seq_no = 1;
    bivv.pkg_util.p_saveLog('Deleted from REB_CLAIM_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
-   DELETE FROM hcrs.bivv_claim_hist_t;
-   bivv.pkg_util.p_saveLog('Deleted from BIVV_CLAIM_HIST_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+--   DELETE FROM hcrs.bivv_claim_hist_t;
+   DELETE FROM hcrs.claim_hist_t
+   WHERE source_id = c_source_id;
+   bivv.pkg_util.p_saveLog('Deleted from CLAIM_HIST_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
-   DELETE FROM hcrs.bivv_pymnt_hist_t;
-   bivv.pkg_util.p_saveLog('Deleted from BIVV_PYMNT_HIST_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
+--   DELETE FROM hcrs.bivv_pymnt_hist_t;
+   DELETE FROM hcrs.pymnt_hist_t
+   WHERE source_id = c_source_id;
+   bivv.pkg_util.p_saveLog('Deleted from PYMNT_HIST_T: '||SQL%ROWCOUNT||' rows', c_program, v_module);
 
    bivv.pkg_util.p_saveLog('END', c_program, v_module);
 
---   COMMIT;
 EXCEPTION
    WHEN OTHERS THEN
       ROLLBACK;
