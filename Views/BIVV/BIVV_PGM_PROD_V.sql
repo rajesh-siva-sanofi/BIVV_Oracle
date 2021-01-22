@@ -1,18 +1,16 @@
 CREATE OR REPLACE VIEW BIVV_PGM_PROD_VAL_V AS
 WITH v AS (
    SELECT    
-      b.bunit_id_pri, p.prod_id_pri,c.cont_internal_id, c.cont_num
+      b.bunit_id_pri, b.bunit_num, p.prod_id_pri,c.cont_internal_id, c.cont_num
       ,SUBSTR(p.prod_id_pri,1,5) AS ndc_lbl, SUBSTR(p.prod_id_pri,6,4) AS ndc_prod, SUBSTR(p.prod_id_pri,10,2) AS ndc_pckg
-      ,pm.first_dt_sld, hcrs.prod_mstr.f_termdate(pm.ndc_lbl, pm.ndc_prod, pm.ndc_pckg) AS term_dt
       ,p.prod_dt_first_sale, p.prod_dt_cms_expire
-      ,cp.cppt_dt_start, cp.cppt_dt_end    
-      ,(SELECT COUNT(*) FROM bivvcars.adjitem ai WHERE pg.cpgrp_num = ai.cpgrp_num AND ai.bunit_num = b.bunit_num) AS adjitems_cnt
+      ,MIN(cp.cppt_dt_start) AS cppt_dt_start, MAX(cp.cppt_dt_end) AS cppt_dt_end
+      ,(SELECT COUNT(*) FROM bivvcars.adjitem ai WHERE ai.cont_num = c.cont_num AND ai.bunit_num = b.bunit_num) AS adjitems_cnt
    FROM 
       bivvcars.cont c
       ,bivvcars.cpgrp pg
       ,bivvcars.cppt cp
       ,bivvcars.prod p
-      ,hcrs.prod_mstr_t pm
       ,bivvcars.elig e
       ,bivvcars.bunit b
    WHERE 1=1
@@ -28,25 +26,32 @@ WITH v AS (
       AND pg.eligset_num = e.eligset_num
       AND e.status_num IN (40,41) -- Active, Edit Pending
       AND e.bunit_num = b.bunit_num
-      AND SUBSTR(p.prod_id_pri,1,5) = pm.ndc_lbl (+)
-      AND SUBSTR(p.prod_id_pri,6,4) = pm.ndc_prod (+)
-      AND SUBSTR(p.prod_id_pri,10,2) = pm.ndc_pckg (+)
+   GROUP BY 
+      b.bunit_id_pri, b.bunit_num, p.prod_id_pri,c.cont_internal_id, c.cont_num
+      ,SUBSTR(p.prod_id_pri,1,5), SUBSTR(p.prod_id_pri,6,4), SUBSTR(p.prod_id_pri,10,2)
+      ,p.prod_dt_first_sale, p.prod_dt_cms_expire
 )
 SELECT 
    CASE 
       WHEN m.hcrs_pgm_id IS NULL AND v.adjitems_cnt > 0 THEN 'ERR: HCRS program not mapped and claim lines found'
-      WHEN v.first_dt_sld IS NULL THEN 'ERR: Product not found in HCRS'
+      WHEN pm.first_dt_sld IS NULL THEN 'ERR: Product not found in HCRS'
       WHEN m.hcrs_pgm_id IS NULL THEN 'WARN: HCRS program not mapped, but no claim lines found'
       WHEN (SELECT COUNT(*) FROM hcrs.pgm_t p WHERE p.pgm_id = m.hcrs_pgm_id) = 0 THEN 'ERR: Program not found in HCRS'
       ELSE 'OK' 
    END AS val_msg
    ,m.hcrs_pgm_id AS pgm_id, m.pgm_cd, m.pgm_nm, m.eff_dt AS pgm_eff_dt, m.end_dt AS pgm_end_dt
-   ,v.*
+   ,v.bunit_id_pri, v.bunit_num, v.prod_id_pri, v.cont_internal_id, v.cont_num, v.ndc_lbl, v.ndc_prod, v.ndc_pckg
+   ,v.prod_dt_first_sale, v.prod_dt_cms_expire, v.cppt_dt_start, v.cppt_dt_end
+   ,pm.first_dt_sld, hcrs.prod_mstr.f_termdate(pm.ndc_lbl, pm.ndc_prod, pm.ndc_pckg) AS term_dt
 FROM v
    ,medi_pgms_map_v m
+   ,hcrs.prod_mstr_t pm
 WHERE 1=1
    AND v.cont_num = m.cont_num (+)
    AND v.bunit_id_pri = m.state_cd (+)
+   AND v.ndc_lbl = pm.ndc_lbl (+)
+   AND v.ndc_prod = pm.ndc_prod (+)
+   AND v.ndc_pckg = pm.ndc_pckg (+)
    -- for these 5 pgms only show eligbility where claims exists because otherwise we get eligbility for all 51 states
 --   AND CASE WHEN v.cont_internal_id IN ('VAMCOCCCPL', 'VAMCOCCCPLEXP', 'VAMCOMD4', 'VAMCOMD4EXP', 'WICDP') THEN v.adjitems_cnt ELSE 1 END > 0
    AND CASE 
