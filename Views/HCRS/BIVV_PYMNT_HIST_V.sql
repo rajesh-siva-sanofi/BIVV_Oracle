@@ -49,48 +49,49 @@ SELECT  v.co_id,
 )
 --Main query
 SELECT  chk_v.co_id,
-        p.state_cd,
-        p.pgm_id,
-        p.pgm_nm,
-        chk_v.ndc_lbl,
-        chk_v.ndc_prod,
-        chk_v.ndc_pckg,
-        chk_v.NDC,
-        pm.prod_nm,
-        chk_v.period_id claim_period_id,
-        r.yr||'Q'||r.qtr as claim_period,
-        chk_v.reb_clm_seq_no,
-        chk_v.check_id,
-        chk_v.paid_amt,
-        chk_v.int_amt,
-        chk_v.check_input_dt,
-        chk_v.check_req_dt,
-        chk_v.check_dt check_cut_dt,
-        chk_v.pymnt_catg_cd,
-        chk_v.pymnt_catg_desc,
-        chk_v.check_req_stat_cd,
-        chk_v.check_status,
-        ag.check_group_id,
-        ag.check_group_desc
+   p.state_cd,
+   p.pgm_id,
+   p.pgm_nm,
+   chk_v.ndc_lbl,
+   chk_v.ndc_prod,
+   chk_v.ndc_pckg,
+   chk_v.NDC,
+   pm.prod_nm,
+   chk_v.period_id claim_period_id,
+   r.yr||'Q'||r.qtr as claim_period,
+   chk_v.reb_clm_seq_no,
+   chk_v.check_id,
+   chk_v.paid_amt,
+   chk_v.int_amt,
+   chk_v.check_input_dt,
+   chk_v.check_req_dt,
+   chk_v.check_dt check_cut_dt,
+   chk_v.pymnt_catg_cd,
+   chk_v.pymnt_catg_desc,
+   chk_v.check_req_stat_cd,
+   chk_v.check_status,
+   ag.check_group_id,
+   ag.check_group_desc,
+   'BIVV' AS source_id
 FROM chk_v, hcrs.co_t t, hcrs.pgm_t p, hcrs.prod_mstr_t pm, hcrs.period_t r,
-                       (SELECT x.check_id,
-                               x.apprvl_grp_id check_group_id,
-                               g.apprvl_grp_desc check_group_desc
-                        FROM hcrs.check_apprvl_grp_chk_xref_t x,
-                             hcrs.check_apprvl_grp_t g
-                        WHERE g.apprvl_grp_id = x.apprvl_grp_id
-                        --need to get max due to duplicate records in check_apprvl_grp_chk_xref_t
-                         AND x.apprvl_grp_id IN (SELECT max(x2.apprvl_grp_id)
-                                                FROM hcrs.check_apprvl_grp_chk_xref_t x2
-                                                WHERE x.check_id = x2.check_id)) ag
+   (SELECT x.check_id,
+      x.apprvl_grp_id check_group_id,
+      g.apprvl_grp_desc check_group_desc
+   FROM hcrs.check_apprvl_grp_chk_xref_t x,
+      hcrs.check_apprvl_grp_t g
+   WHERE g.apprvl_grp_id = x.apprvl_grp_id
+      --need to get max due to duplicate records in check_apprvl_grp_chk_xref_t
+      AND x.apprvl_grp_id IN (
+         SELECT max(x2.apprvl_grp_id)
+         FROM hcrs.check_apprvl_grp_chk_xref_t x2
+         WHERE x.check_id = x2.check_id)) ag
 WHERE chk_v.co_id = t.co_id
-AND chk_v.pgm_id = p.pgm_id
-AND chk_v.period_id = r.period_id
-AND chk_v.ndc_lbl = pm.ndc_lbl
-AND chk_v.ndc_prod = pm.ndc_prod
-AND chk_v.ndc_pckg = pm.ndc_pckg
-AND chk_v.check_id = ag.check_id (+)
---AND chk_v.period_id BETWEEN 45 AND 148
+   AND chk_v.pgm_id = p.pgm_id
+   AND chk_v.period_id = r.period_id
+   AND chk_v.ndc_lbl = pm.ndc_lbl
+   AND chk_v.ndc_prod = pm.ndc_prod
+   AND chk_v.ndc_pckg = pm.ndc_pckg
+   AND chk_v.check_id = ag.check_id (+)
 ORDER BY chk_v.pgm_id,
       chk_v.period_id,
       chk_v.ndc_lbl,

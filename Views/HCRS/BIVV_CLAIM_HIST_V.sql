@@ -133,59 +133,60 @@ AS
 )
 --main query
 SELECT
-uv.src,
-uv.co_id,
-uv.co_nm,
-uv.period_id,
-uv.claim_period,
-p.state_cd,
-uv.pgm_id,
-p.pgm_nm,
-uv.ndc_lbl,
-uv.ndc_prod,
-uv.ndc_pckg,
-pm.prod_nm,
-uv.reb_clm_seq_no,
-uv.ln_itm_seq_no,
-uv.pgm_pur,
-uv.ura,
-uv.claim_units,
---CASE WHEN uv.ura IS NULL THEN 0 ELSE round(uv.claim_units * uv.ura,2) END AS claim_amt,
-uv.claim_amt,
-uv.paid_units,
-uv.paid_amt,
-uv.int_amt,
-uv.dspt_units,
-CASE WHEN uv.ura IS NULL THEN 0 ELSE round(uv.dspt_units * uv.ura,2) END AS dspt_amt,
-uv.wrt_off_units,
-CASE WHEN uv.ura IS NULL THEN 0 ELSE round(uv.wrt_off_units * uv.ura,2) END AS wrt_off_amt,
-uv.dspt_seq_no,
-uv.rpr_dspt_rsn_id,
-CASE WHEN uv.rpr_dspt_rsn_id > 0 THEN
+   uv.src,
+   uv.co_id,
+   uv.co_nm,
+   uv.period_id,
+   uv.claim_period,
+   p.state_cd,
+   uv.pgm_id,
+   p.pgm_nm,
+   uv.ndc_lbl,
+   uv.ndc_prod,
+   uv.ndc_pckg,
+   pm.prod_nm,
+   uv.reb_clm_seq_no,
+   uv.ln_itm_seq_no,
+   uv.pgm_pur,
+   uv.ura,
+   uv.claim_units,
+   --CASE WHEN uv.ura IS NULL THEN 0 ELSE round(uv.claim_units * uv.ura,2) END AS claim_amt,
+   uv.claim_amt,
+   uv.paid_units,
+   uv.paid_amt,
+   uv.int_amt,
+   uv.dspt_units,
+   CASE WHEN uv.ura IS NULL THEN 0 ELSE round(uv.dspt_units * uv.ura,2) END AS dspt_amt,
+   uv.wrt_off_units,
+   CASE WHEN uv.ura IS NULL THEN 0 ELSE round(uv.wrt_off_units * uv.ura,2) END AS wrt_off_amt,
+   uv.dspt_seq_no,
+   uv.rpr_dspt_rsn_id,
+   CASE WHEN uv.rpr_dspt_rsn_id > 0 THEN
      (SELECT rr.rpr_dspt_rsn_descr FROM hcrs.rpr_dspt_rsn_t rr WHERE rr.actv_flg = 'Y' AND rr.rpr_dspt_rsn_id = uv.rpr_dspt_rsn_id)
-ELSE NULL
-END rpr_dspt_rsn_descr,
-uv.dispute_reason,
-uv.reb_claim_stat_cd,
-uv.reb_claim_ln_itm_stat_cd,
-uv.check_id,
-uv.subm_typ_cd,
-uv.pstmrk_dt,
-p.prcss_day_limit,
-uv.rcv_dt,
-uv.input_dt,
-uv.invc_num,
-uv.script_cnt,
-uv.reimbur_amt,
-uv.nonmed_reimbur_amt,
-uv.total_reimbur_amt,
-uv.valid_dt,
-uv.prelim_run_dt,
-uv.final_run_dt,
-(uv.pstmrk_dt + p.prcss_day_limit) AS due_dt,
-uv.mod_dt,
-uv.mod_by,
-pg.pgm_group_lvl1_cd util_rec_typ
+   ELSE NULL
+   END rpr_dspt_rsn_descr,
+   uv.dispute_reason,
+   uv.reb_claim_stat_cd,
+   uv.reb_claim_ln_itm_stat_cd,
+   uv.check_id,
+   uv.subm_typ_cd,
+   uv.pstmrk_dt,
+   p.prcss_day_limit,
+   uv.rcv_dt,
+   uv.input_dt,
+   uv.invc_num,
+   uv.script_cnt,
+   uv.reimbur_amt,
+   uv.nonmed_reimbur_amt,
+   uv.total_reimbur_amt,
+   uv.valid_dt,
+   uv.prelim_run_dt,
+   uv.final_run_dt,
+   (uv.pstmrk_dt + p.prcss_day_limit) AS due_dt,
+   uv.mod_dt,
+   uv.mod_by,
+   pg.pgm_group_lvl1_cd AS util_rec_typ,
+   'BIVV' AS source_id
 FROM hcrs.pgm_t p, hcrs.prod_mstr_t pm, uv,
      (
      SELECT v.pgm_id, v.pgm_group_lvl1_cd
@@ -194,12 +195,12 @@ FROM hcrs.pgm_t p, hcrs.prod_mstr_t pm, uv,
      ORDER BY v.pgm_id
      ) pg
 WHERE pg.pgm_id = uv.pgm_id
-AND p.pgm_id = uv.pgm_id
-AND pm.ndc_lbl = uv.ndc_lbl
-AND pm.ndc_lbl  IN ('71104') /* Only BIVV */
-AND pm.ndc_prod = uv.ndc_prod
-AND pm.ndc_pckg = uv.ndc_pckg
-/*AND uv.period_id BETWEEN 45 AND 148*/
+   AND p.pgm_id = uv.pgm_id
+   AND pm.ndc_lbl = uv.ndc_lbl
+   AND pm.ndc_lbl  IN ('71104') /* Only BIVV */
+   AND pm.ndc_prod = uv.ndc_prod
+   AND pm.ndc_pckg = uv.ndc_pckg
+   /*AND uv.period_id BETWEEN 45 AND 148*/
 ORDER BY uv.co_id,
       uv.period_id,
       uv.pgm_id,
@@ -207,5 +208,4 @@ ORDER BY uv.co_id,
       uv.ndc_prod,
       uv.ndc_pckg,
       uv.reb_clm_seq_no,
-      uv.check_id
-;
+      uv.check_id;
