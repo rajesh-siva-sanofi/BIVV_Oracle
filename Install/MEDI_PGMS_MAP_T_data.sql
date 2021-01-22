@@ -1,5 +1,3 @@
-prompt PL/SQL Developer Export Tables for user BIVV@HCRSD
-prompt Created by E0419103 on Friday, January 22, 2021
 set feedback off
 set define off
 
