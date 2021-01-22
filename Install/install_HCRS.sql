@@ -25,8 +25,17 @@ SELECT * FROM global_name;
 SELECT SYSDATE FROM dual;
 
 -- Tables for iQVIA
-@@../Tables/HCRS/BIVV_CLAIM_HIST_T.sql
-@@../Tables/HCRS/BIVV_PYMNT_HIST_T.sql
+--@@../Tables/HCRS/BIVV_CLAIM_HIST_T.sql
+ALTER TABLE hcrs.claim_hist_t add source_id VARCHAR2(20);
+-- update all existing rows to Genzyme
+UPDATE hcrs.claim_hist_t
+SET source_id = 'GNZ';
+
+--@@../Tables/HCRS/BIVV_PYMNT_HIST_T.sql
+ALTER TABLE hcrs.pymnt_hist_t add source_id VARCHAR2(20);
+-- update all existing rows to Genzyme
+UPDATE hcrs.pymnt_hist_t
+SET source_id = 'GNZ';
 
 -- Views for iQVIA
 @@../Views/HCRS/BIVV_CLAIM_HIST_V.sql
@@ -58,6 +67,8 @@ BEGIN
    dbms_utility.compile_schema('HCRS', FALSE);  -- only compile invalid
 END;
 /
+
+COMMIT;
 
 -- What time did this end running?
 SELECT SYSDATE FROM dual;

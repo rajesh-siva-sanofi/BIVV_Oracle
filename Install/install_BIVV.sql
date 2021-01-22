@@ -46,6 +46,8 @@ SELECT SYSDATE FROM dual;
 @@../Tables/BIVV/PUR_FINAL_RESULTS_T.sql
 
 -- BIVV views
+@@../Views/BIVV/BIVV_CONT_EXCL_V.sql
+@@../Views/BIVV/BIVV_PGM_PROD_V.sql
 @@../Views/BIVV/BIVV_MEDI_CLAIM_V.sql
 @@../Views/BIVV/BIVV_MEDI_CLAIM_LINE_V.sql
 @@../Views/BIVV/BIVV_MEDI_PAID_LINE_V.sql
@@ -55,9 +57,7 @@ SELECT SYSDATE FROM dual;
 @@../Views/BIVV/BIVV_CHECK_REQ_3views.sql
 @@../Views/BIVV/BIVV_CHECK_AGG_REQ_V.sql
 @@../Views/BIVV/BIVV_CHECK_APPR_GRP_V.sql
-@@../Views/BIVV/BIVV_PGM_PROD_V.sql
 @@../Views/BIVV/BIVV_PUR_FINAL_RESULTS_V.sql
-@@../Views/BIVV/BIVV_CONT_EXCL_V.sql
 
 -- main packages
 @@../Packages/BIVV/pkg_util.sql
@@ -75,6 +75,8 @@ BEGIN
    dbms_utility.compile_schema('BIVV', FALSE);  -- only compile invalid
 END;
 /
+
+COMMIT;
 
 -- What time did this end running?
 SELECT SYSDATE FROM dual;

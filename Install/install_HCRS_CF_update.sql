@@ -91,12 +91,18 @@ WHERE t.formula_id = 107 -- Federal URA with TCAP
 --DELETE FROM hcrs.drug_catg_grp_asgnmnt_t t WHERE t.drug_catg_grp_cd = 'CF';
 --DELETE FROM hcrs.drug_catg_grp_t WHERE drug_catg_grp_cd = 'CF';
 --ALTER TABLE HCRS.PROD_FMLY_T DROP COLUMN CLOTTING_FACTOR_IND;
+--@@..\Oracle\prod\fe_prod_fmly_v.sql
 --@@..\Oracle\prod\pkg_pur_calc.sql
 --@@..\Oracle\prod\pkg_ui_dm_pur_catg_comp_val.sql
+--@@..\Oracle\prod\pkg_ui_dm_prod_sel.sql
+
+-- Views
+@@../Views/HCRS/fe_prod_fmly_v.sql
 
 -- Packages
 @@../Packages/HCRS/pkg_ui_dm_pur_catg_comp_val.sql
 @@../Packages/HCRS/pkg_pur_calc.sql
+@@../Packages/HCRS/pkg_ui_dm_prod_sel.sql
 
 BEGIN
    dbms_utility.compile_schema('HCRS', FALSE);  -- only compile invalid
