@@ -12,7 +12,7 @@ CREATE OR REPLACE VIEW BIVV.IC_PRICING_V AS
 ****************************************************************************/
 WITH ddr_qtr_data
   AS (-- Extract quarterly amp/bp data from ddr table
-      SELECT SUBSTR(period,4,4) || SUBSTR(period,2,1) year_qtr
+      SELECT SUBSTR(period,4,4) || SUBSTR(period,1,1) year_qtr
             --,CASE WHEN ndc = '64406-0811'
             --      THEN '64406-0911'
             -- ELSE ndc
