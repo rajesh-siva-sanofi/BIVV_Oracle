@@ -28,6 +28,8 @@ SELECT SYSDATE FROM dual;
 @@../Tables/BIVV/CONV_LOG_T.sql
 @@../Tables/BIVV/MEDI_PGMS_MAP_T.sql
 @@../Tables/BIVV/MEDI_PGMS_MAP_BIOGEN_T.sql
+-- JT needs this temp table
+@@../Tables/BIVV/TEMP_DDR_AMP_BP_URA_T.sql
 
 -- stage tables
 @@../Tables/BIVV/REB_CLAIM_T.sql
@@ -63,9 +65,10 @@ SELECT SYSDATE FROM dual;
 @@../Packages/BIVV/pkg_util.sql
 @@../Packages/BIVV/pkg_stg_medi.sql
 
--- load Program mapping data
+-- load table data
 @@MEDI_PGMS_MAP_T_data.sql
 @@MEDI_PGMS_MAP_BIOGEN_T_data.sql
+@@TEMP_DDR_AMP_BP_URA_T_data.sql
 
 -- JT's stuff (it needs view scripts to be in the same directory: ic_product_v.sql and ic_pricing_v.sql)
 @@install_product_bivv.sql
