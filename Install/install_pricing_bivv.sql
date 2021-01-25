@@ -64,7 +64,7 @@ SELECT SYSDATE FROM dual;
 --------------------------------------------------------------------------------
 -- P-01: Create IntegriChain Pricing Master view and table
 --------------------------------------------------------------------------------
-@@..\Views\BIVV\ic_pricing_v.sql
+@@../Views/BIVV/ic_pricing_v.sql
 
 DROP TABLE bivv.ic_pricing_t;
 CREATE TABLE bivv.ic_pricing_t

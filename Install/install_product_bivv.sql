@@ -61,7 +61,7 @@ SELECT SYSDATE FROM dual;
 --------------------------------------------------------------------------------
 -- P-01: Create IntegriChain Product Master view and table
 --------------------------------------------------------------------------------
-@@..\Views\BIVV\ic_product_v.sql
+@@../Views/BIVV/ic_product_v.sql
 
 DROP TABLE bivv.ic_product_t;
 CREATE TABLE bivv.ic_product_t
