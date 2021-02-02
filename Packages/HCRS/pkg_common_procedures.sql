@@ -5317,6 +5317,10 @@ AS
              o_bad_nom_cnt,
              o_bad_hhs_cnt
         FROM hcrs.prfl_prod_calc_comp_def2_wrk_t t;
+      -- Disable these checks until the component config is corrected
+      o_bad_trans_cnt := 0;
+      o_bad_nom_cnt := 0;
+      o_bad_hhs_cnt := 0;
    EXCEPTION
       WHEN OTHERS
       THEN
