@@ -4,14 +4,19 @@ CREATE OR REPLACE PACKAGE BIVV.pkg_stg_medi AS
    PROCEDURE p_run_phase2 (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y');
    PROCEDURE p_run_phase3 (a_trunc_flg VARCHAR2 DEFAULT 'Y', a_valid_flg VARCHAR2 DEFAULT 'Y');
 
+   PROCEDURE p_run_pricing_delta;
+
 END;
 /
 CREATE OR REPLACE PACKAGE BODY BIVV.pkg_stg_medi AS
 
-   c_program      CONSTANT conv_log_t.program%TYPE := 'BIVV.PKG_STG_MEDI';
-   c_userid_BIVV  CONSTANT reb_claim_t.mod_by%TYPE := 'BIVV';
+   c_program         CONSTANT conv_log_t.program%TYPE := 'BIVV.PKG_STG_MEDI';
+   c_userid_BIVV     CONSTANT reb_claim_t.mod_by%TYPE := 'BIVV';
+   c_prfl_nm_suffix  CONSTANT VARCHAR2(20) := 'Bioverativ LOADED';
 
    E_InvalidData EXCEPTION;
+   E_InvalidPrfl EXCEPTION;
+   E_InvalidPrcss EXCEPTION;
 
 /*
    Validates product/program eligibility data
@@ -980,6 +985,525 @@ BEGIN
    p_load_check_req_tbl;  
    p_load_check_t_tbl;
    p_load_check_appr_grp;
+
+   COMMIT;
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN E_InvalidData THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('END', c_program, v_module);
+
+   WHEN OTHERS THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+END;
+
+PROCEDURE p_process_WAC_price (a_prc ic_pricing_delta_v%ROWTYPE) IS 
+
+   v_module    conv_log_t.module%TYPE := 'p_process_WAC_price';
+   v_cnt       NUMBER;
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+
+   SELECT COUNT(*)
+   INTO v_cnt
+   FROM hcrs.prod_price_t t
+   WHERE t.prod_price_typ_cd = 'LP'
+      AND t.ndc_lbl = a_prc.ndc_lbl
+      AND t.ndc_prod = a_prc.ndc_prod
+      AND t.ndc_pckg = a_prc.ndc_pckg
+      AND t.eff_dt = a_prc.wac_strt_dt;
+
+--   pkg_util.p_saveLog('LP count: '||v_cnt, c_program, v_module);
+   IF v_cnt = 0 THEN 
+      pkg_util.p_saveLog('LP not found', c_program, v_module);
+
+      INSERT INTO bivv.prod_price_t
+         (ndc_lbl, ndc_prod, ndc_pckg, prod_price_typ_cd, eff_dt, end_dt, price_amt, rec_src_ind) 
+      VALUES
+         (a_prc.ndc_lbl, a_prc.ndc_prod, a_prc.ndc_pckg, 'LP', a_prc.wac_strt_dt, a_prc.wac_end_dt, a_prc.wac, 'M');
+
+      pkg_util.p_saveLog('Inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   END IF;
+
+   SELECT COUNT(*)
+   INTO v_cnt
+   FROM hcrs.prod_price_t t
+   WHERE t.prod_price_typ_cd = 'WAC'
+      AND t.ndc_lbl = a_prc.ndc_lbl
+      AND t.ndc_prod = a_prc.ndc_prod
+      AND t.ndc_pckg = a_prc.ndc_pckg
+      AND t.eff_dt = a_prc.wac_strt_dt;
+
+--   pkg_util.p_saveLog('WAC count: '||v_cnt, c_program, v_module);
+   IF v_cnt = 0 THEN 
+      pkg_util.p_saveLog('WAC not found', c_program, v_module);
+
+      INSERT INTO bivv.prod_price_t
+         (ndc_lbl, ndc_prod, ndc_pckg, prod_price_typ_cd, eff_dt, end_dt, price_amt, rec_src_ind) 
+      VALUES
+         (a_prc.ndc_lbl, a_prc.ndc_prod, a_prc.ndc_pckg, 'WAC', a_prc.wac_strt_dt, a_prc.wac_end_dt, a_prc.wac, 'M');
+
+      pkg_util.p_saveLog('Inserted: '||SQL%ROWCOUNT, c_program, v_module);
+   END IF;
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+END;
+/*
+*/
+FUNCTION f_create_prfl (
+   a_prcss_typ    hcrs.prfl_t.prcss_typ_cd%TYPE,
+   a_agency       hcrs.prfl_t.agency_typ_cd%TYPE,
+   a_prfl_nm      hcrs.prfl_t.prfl_nm%TYPE,
+   a_tim_per_cd   hcrs.prfl_t.tim_per_cd%TYPE,
+   a_begn_dt      hcrs.prfl_t.begn_dt%TYPE,
+   a_end_dt       hcrs.prfl_t.end_dt%TYPE) RETURN hcrs.prfl_t.prfl_id%TYPE IS
+
+   v_module       conv_log_t.module%TYPE := 'f_create_prfl';
+   v_prfl_id      hcrs.prfl_t.prfl_id%TYPE;
+
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+
+   -- header record
+   INSERT INTO prfl_t 
+      (prfl_id, snpsht_id, prfl_stat_cd, agency_typ_cd, tim_per_cd
+      ,prcss_typ_cd, prfl_nm, begn_dt, end_dt, copy_hist_ind, prelim_ind, mtrx_ind)
+   VALUES
+      (hcrs.prfl_s.nextval,0, hcrs.pkg_constants.cs_prfl_stat_transmitted_cd, a_agency, a_tim_per_cd
+      ,a_prcss_typ, a_prfl_nm, a_begn_dt, a_end_dt, 'N', 'N', 'N')
+   RETURNING prfl_id INTO v_prfl_id;
+
+   pkg_util.p_saveLog('PRFL_T inserted: '||a_prfl_nm||' ('||v_prfl_id||'): '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- company
+   INSERT INTO prfl_co_t (prfl_id, co_id)
+   VALUES (v_prfl_id, 121);
+   pkg_util.p_saveLog('PRFL_CO_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+
+   -- determine and insert calc type
+   INSERT INTO prfl_calc_typ_t (prfl_id, calc_typ_cd, calc_mthd_cd)
+   WITH v AS (
+      SELECT 'MED_MTHLY' AS prcss_typ, 'AMP' AS calc_typ, 'ACTL' AS calc_mthd FROM dual
+      UNION
+      SELECT 'MED_QTRLY' AS prcss_typ, 'AMP' AS calc_typ, 'ACTL' AS calc_mthd FROM dual
+      UNION
+      SELECT 'MED_QTRLY' AS prcss_typ, 'BP' AS calc_typ, 'ACTL' AS calc_mthd FROM dual
+      UNION
+      SELECT 'MEDICARE_QTRLY' AS prcss_typ, 'ASP' AS calc_typ, 'ACTL-BIOV' AS calc_mthd FROM dual
+      UNION
+      SELECT 'VA_QTRLY' AS prcss_typ, 'NFAMP' AS calc_typ, 'ACTL-BIOV' AS calc_mthd FROM dual
+      UNION
+      SELECT 'VA_ANNL' AS prcss_typ, 'NFAMP' AS calc_typ, 'ACTL' AS calc_mthd FROM dual
+      UNION
+      SELECT 'VA_ANNL' AS prcss_typ, 'FCP' AS calc_typ, 'ACTL' AS calc_mthd FROM dual)
+   SELECT p.prfl_id, v.calc_typ, v.calc_mthd
+   FROM prfl_t p, v
+   WHERE p.prcss_typ_cd = v.prcss_typ
+      AND p.prfl_id = v_prfl_id;
+
+   pkg_util.p_saveLog('PRFL_CALC_TYP_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- copy variable from the latest profile bivv profile for the same processing type
+   INSERT INTO prfl_var_t (prfl_id, agency_typ_cd, var_cd, val_txt, prcss_typ_cd)
+   SELECT v_prfl_id, v.agency_typ_cd, v.var_cd, v.val_txt, v.prcss_typ_cd
+   FROM hcrs.prfl_var_t v
+   WHERE v.prfl_id = (
+      SELECT MAX(prfl_id)
+      FROM hcrs.prfl_t p
+      WHERE p.prcss_typ_cd = a_prcss_typ);
+   pkg_util.p_saveLog('PRFL_VAR_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+   RETURN v_prfl_id;
+
+EXCEPTION
+   WHEN OTHERS THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+
+END;
+
+/*
+*/
+FUNCTION f_get_profile (
+   a_prcss_typ hcrs.prfl_t.prcss_typ_cd%TYPE,
+   a_start_dt  hcrs.prfl_t.begn_dt%TYPE,
+   a_end_dt    hcrs.prfl_t.end_dt%TYPE) RETURN hcrs.prfl_t.prfl_id%TYPE IS
+
+   v_module       conv_log_t.module%TYPE := 'f_get_profile';
+   v_prfl_id      hcrs.prfl_t.prfl_id%TYPE;
+   v_tim_per_cd   hcrs.prfl_t.tim_per_cd%TYPE;
+   v_agency       hcrs.prfl_t.agency_typ_cd%TYPE;
+   v_prfl_nm      hcrs.prfl_t.prfl_nm%TYPE;
+
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+
+   CASE 
+      -- monthly
+      WHEN a_prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_mthly THEN 
+         v_tim_per_cd := to_char(a_start_dt, 'yyyy"Q"q"M"mm');
+         v_agency := hcrs.pkg_constants.cs_atp_med_cd;
+         v_prfl_nm := TO_CHAR(a_start_dt,'FMYYYY Month') || ' AMP '||c_prfl_nm_suffix;
+
+      -- quarterly
+      WHEN a_prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_qtrly THEN
+         v_tim_per_cd := to_char(a_start_dt, 'yyyy"Q"q');
+         v_agency := hcrs.pkg_constants.cs_atp_med_cd;
+         v_prfl_nm := TO_CHAR(a_start_dt,'yyyy"Q"q') || ' AMP/BP '||c_prfl_nm_suffix;
+
+      WHEN a_prcss_typ = hcrs.pkg_constants.cs_medicare_prcssng_typ_qtrly THEN
+         v_tim_per_cd := to_char(a_start_dt, 'yyyy"Q"q');
+         v_agency := hcrs.pkg_constants.cs_atp_medicare_cd;
+         v_prfl_nm := TO_CHAR(a_start_dt,'yyyy"Q"q') || ' ASP '||c_prfl_nm_suffix;
+
+      WHEN a_prcss_typ = hcrs.pkg_constants.cs_va_prcssng_typ_qtrly THEN
+         v_tim_per_cd := to_char(a_start_dt, 'yyyy"Q"q');
+         v_agency := hcrs.pkg_constants.cs_atp_va_cd;
+         v_prfl_nm := TO_CHAR(a_start_dt,'yyyy"Q"q') || ' NFAMP '||c_prfl_nm_suffix;
+
+      --annual
+      WHEN a_prcss_typ = hcrs.pkg_constants.cs_va_prcssng_typ_annl THEN 
+         v_tim_per_cd := to_char(a_start_dt, 'yyyy');
+         v_agency := hcrs.pkg_constants.cs_atp_va_cd;
+         v_prfl_nm := TO_CHAR(a_start_dt,'yyyy') || ' NFAMP/FCP '||c_prfl_nm_suffix;
+
+   END CASE;
+
+   pkg_util.p_saveLog('Looking for a_prcss_typ: '||a_prcss_typ||', v_tim_per_cd: '||v_tim_per_cd, c_program, v_module);
+
+   BEGIN
+      -- see if HCRS already has matching profile for this time period
+      SELECT prfl_id
+      INTO v_prfl_id
+      FROM hcrs.prfl_t p
+      WHERE p.prfl_stat_cd = hcrs.pkg_constants.cs_prfl_stat_transmitted_cd
+         AND p.tim_per_cd = v_tim_per_cd
+         AND p.prcss_typ_cd = a_prcss_typ
+         AND p.prfl_nm LIKE '%'||c_prfl_nm_suffix||'%';
+
+   EXCEPTION
+      WHEN no_data_found THEN
+         -- see if BIVV already has one
+         SELECT prfl_id
+         INTO v_prfl_id
+         FROM prfl_t p
+         WHERE p.prfl_stat_cd = hcrs.pkg_constants.cs_prfl_stat_transmitted_cd
+            AND p.tim_per_cd = v_tim_per_cd
+            AND p.prcss_typ_cd = a_prcss_typ
+            AND p.prfl_nm LIKE '%'||c_prfl_nm_suffix||'%';
+   END;
+   
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+   RETURN v_prfl_id;
+
+EXCEPTION
+   WHEN no_data_found THEN
+      -- create a new profile
+      RETURN f_create_prfl (a_prcss_typ, v_agency, v_prfl_nm, v_tim_per_cd, a_start_dt, a_end_dt);
+
+   WHEN OTHERS THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+
+END;
+
+/*
+*/
+PROCEDURE p_process_GP_price (a_prc ic_pricing_delta_v%ROWTYPE) IS 
+
+   v_module    conv_log_t.module%TYPE := 'p_process_GP_price';
+--   v_cnt       NUMBER;
+--   v_period_id hcrs.period_t.period_id%TYPE;
+   v_prfl_id   hcrs.prfl_t.prfl_id%TYPE;
+   v_start_dt  DATE;
+   v_end_dt    DATE;
+   v_skip      BOOLEAN;
+
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+
+   -- process prod transmission table (only AMP/BP quarterly)
+   INSERT INTO bivv.prod_trnsmsn_t 
+      (ndc_lbl, ndc_prod, period_id, trnsmsn_seq_no
+      ,prod_trnsmsn_stat_cd, prod_trnsmsn_rsn_cd
+      ,amp_amt, bp_amt, actv_flg, amp_apprvl_flg, bp_apprvl_flg, trnsmsn_dt, dra_baseline_flg)
+   SELECT 
+      a_prc.ndc_lbl, a_prc.ndc_prod, p.period_id, 1
+      ,hcrs.pkg_constants.cs_prod_trnsmsn_trans_cd, hcrs.pkg_constants.cs_prod_trnsmsn_rsn_cd_qtr
+      ,a_prc.amp_qtrly, a_prc.bp_qtrly, 'Y', 'Y', 'Y', SYSDATE, 'N'
+   FROM hcrs.period_t p
+   WHERE p.first_day_period = a_prc.qtr_start
+      -- only AMP or BP is not zero
+      AND (NVL(a_prc.amp_qtrly,0) != 0 OR NVL(a_prc.bp_qtrly,0) != 0)
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prod_trnsmsn_t t
+         WHERE t.period_id = p.period_id
+            AND t.ndc_lbl = a_prc.ndc_lbl
+            AND t.ndc_prod = a_prc.ndc_prod);
+
+   pkg_util.p_saveLog('PROD_TRNSMSN_T Inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- process pricing data that needs to be stored on profiles
+   FOR prcss_cur IN (
+      WITH v AS (
+         SELECT hcrs.pkg_constants.cs_med_prcssng_typ_mthly AS prcss_typ, 1 AS period_ind FROM dual UNION
+         SELECT hcrs.pkg_constants.cs_med_prcssng_typ_mthly AS prcss_typ, 2 AS period_ind FROM dual UNION
+         SELECT hcrs.pkg_constants.cs_med_prcssng_typ_mthly AS prcss_typ, 3 AS period_ind FROM dual UNION
+         SELECT hcrs.pkg_constants.cs_med_prcssng_typ_qtrly AS prcss_typ, 1 AS period_ind FROM dual UNION
+         SELECT hcrs.pkg_constants.cs_medicare_prcssng_typ_qtrly AS prcss_typ, 1 AS period_ind FROM dual UNION
+         SELECT hcrs.pkg_constants.cs_va_prcssng_typ_qtrly AS prcss_typ, 1 AS period_ind FROM dual UNION
+         SELECT hcrs.pkg_constants.cs_va_prcssng_typ_annl AS prcss_typ, 1 AS period_ind FROM dual)
+      SELECT prcss_typ, period_ind FROM v
+      ORDER BY 1,2) LOOP
+
+      -- reset skip flag
+      v_skip := FALSE;
+
+      -- get profile start and end dates
+      CASE 
+         WHEN prcss_cur.prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_mthly AND prcss_cur.period_ind = 1 THEN
+            v_start_dt := a_prc.amp_mth_1_strt_dt;
+            v_end_dt := a_prc.amp_mth_1_end_dt;
+            IF a_prc.amp_mth_1 IS NULL THEN v_skip := TRUE; END IF;
+
+         WHEN prcss_cur.prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_mthly AND prcss_cur.period_ind = 2 THEN
+            v_start_dt := a_prc.amp_mth_2_strt_dt;
+            v_end_dt := a_prc.amp_mth_2_end_dt;
+            IF a_prc.amp_mth_2 IS NULL THEN v_skip := TRUE; END IF;
+   
+         WHEN prcss_cur.prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_mthly AND prcss_cur.period_ind = 3 THEN
+            v_start_dt := a_prc.amp_mth_3_strt_dt;
+            v_end_dt := a_prc.amp_mth_3_end_dt;
+            IF a_prc.amp_mth_3 IS NULL THEN v_skip := TRUE; END IF;
+
+         WHEN prcss_cur.prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_qtrly THEN
+            v_start_dt := a_prc.qtr_start;
+            v_end_dt := a_prc.qtr_end;
+            IF a_prc.amp_qtrly IS NULL THEN v_skip := TRUE; END IF;
+         
+         WHEN prcss_cur.prcss_typ = hcrs.pkg_constants.cs_medicare_prcssng_typ_qtrly THEN
+            v_start_dt := a_prc.qtr_start;
+            v_end_dt := a_prc.qtr_end;
+            IF a_prc.asp_qrtly IS NULL THEN v_skip := TRUE; END IF;
+
+         WHEN prcss_cur.prcss_typ = hcrs.pkg_constants.cs_va_prcssng_typ_qtrly THEN
+            v_start_dt := a_prc.qtr_start;
+            v_end_dt := a_prc.qtr_end;
+            IF a_prc.nfamp_qrtly IS NULL THEN v_skip := TRUE; END IF;
+
+         WHEN prcss_cur.prcss_typ = hcrs.pkg_constants.cs_va_prcssng_typ_annl THEN
+            v_start_dt := a_prc.anfamp_start;
+            v_end_dt := a_prc.anfamp_end;
+            IF a_prc.nfamp_annual IS NULL THEN v_skip := TRUE; END IF;
+
+         ELSE
+            RAISE E_InvalidPrcss;
+      END CASE;
+
+      -- if price is present then just continue to the next one
+      IF v_skip THEN CONTINUE; END IF;
+
+      v_prfl_id := f_get_profile (prcss_cur.prcss_typ, v_start_dt, v_end_dt);
+      IF v_prfl_id IS NULL THEN
+         RAISE E_InvalidPrfl;
+      END IF;
+
+      pkg_util.p_saveLog('prfl_id: '||v_prfl_id, c_program, v_module);
+
+      -- prfl prod family (only for Medi profiles)
+      INSERT INTO prfl_prod_fmly_t (prfl_id, ndc_lbl, ndc_prod)
+      SELECT v_prfl_id, a_prc.ndc_lbl, a_prc.ndc_prod 
+      FROM prfl_t p
+      WHERE p.prfl_id = v_prfl_id
+         AND p.prcss_typ_cd = prcss_cur.prcss_typ
+         AND prcss_cur.prcss_typ IN (hcrs.pkg_constants.cs_med_prcssng_typ_mthly, hcrs.pkg_constants.cs_med_prcssng_typ_qtrly)
+         AND NOT EXISTS (
+            SELECT 1 
+            FROM hcrs.prfl_prod_fmly_t t
+            WHERE t.prfl_id = v_prfl_id AND t.ndc_lbl = a_prc.ndc_lbl AND t.ndc_prod = a_prc.ndc_prod);
+      pkg_util.p_saveLog('PRFL_PROD_FMLY_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+      -- prfl prod
+      INSERT INTO prfl_prod_t 
+         (prfl_id, ndc_lbl, ndc_prod, ndc_pckg, pri_whls_mthd_cd, calc_stat_cd, shtdwn_ind)
+      SELECT v_prfl_id, a_prc.ndc_lbl, a_prc.ndc_prod, a_prc.ndc_pckg, 'NONE' ,'COMPLETE', 'N' 
+      FROM prfl_t p
+      WHERE p.prfl_id = v_prfl_id
+         AND p.prcss_typ_cd = prcss_cur.prcss_typ
+         AND NOT EXISTS (
+            SELECT 1 
+            FROM hcrs.prfl_prod_t t
+            WHERE t.prfl_id = v_prfl_id AND t.ndc_lbl = a_prc.ndc_lbl AND t.ndc_prod = a_prc.ndc_prod AND t.ndc_pckg = a_prc.ndc_pckg);
+      pkg_util.p_saveLog('PRFL_PROD_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+   
+      -- prfl calc prod fmly (only for Medi profiles)
+      INSERT INTO prfl_calc_prod_fmly_t
+         (prfl_id, calc_typ_cd, ndc_lbl, ndc_prod, pri_whls_mthd_cd)
+      SELECT t.prfl_id, t.calc_typ_cd, a_prc.ndc_lbl, a_prc.ndc_prod, 'NONE'
+      FROM prfl_calc_typ_t t
+         ,prfl_t p
+      WHERE t.prfl_id = p.prfl_id
+         AND t.prfl_id = v_prfl_id
+         AND p.prcss_typ_cd = prcss_cur.prcss_typ
+         AND prcss_cur.prcss_typ IN (hcrs.pkg_constants.cs_med_prcssng_typ_mthly, hcrs.pkg_constants.cs_med_prcssng_typ_qtrly)
+         AND NOT EXISTS (
+            SELECT 1 
+            FROM hcrs.prfl_calc_prod_fmly_t cp
+            WHERE cp.prfl_id = t.prfl_id
+               AND cp.calc_typ_cd = t.calc_typ_cd
+               AND cp.ndc_lbl = a_prc.ndc_lbl
+               AND cp.ndc_prod = a_prc.ndc_prod);
+      pkg_util.p_saveLog('PRFL_CALC_PROD_FMLY_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+         
+      -- prfl calc prod
+      INSERT INTO prfl_calc_prod_t 
+         (prfl_id, calc_typ_cd, ndc_lbl, ndc_prod, ndc_pckg, pri_whls_mthd_cd)
+      SELECT t.prfl_id, t.calc_typ_cd, a_prc.ndc_lbl, a_prc.ndc_prod, a_prc.ndc_pckg, 'NONE'
+      FROM prfl_calc_typ_t t
+         ,prfl_t p
+      WHERE t.prfl_id = p.prfl_id
+         AND t.prfl_id = v_prfl_id
+         AND p.prcss_typ_cd = prcss_cur.prcss_typ
+         AND NOT EXISTS (
+            SELECT 1 
+            FROM hcrs.prfl_calc_prod_t cp
+            WHERE cp.prfl_id = t.prfl_id
+               AND cp.calc_typ_cd = t.calc_typ_cd
+               AND cp.ndc_lbl = a_prc.ndc_lbl
+               AND cp.ndc_prod = a_prc.ndc_prod
+               AND cp.ndc_pckg = a_prc.ndc_pckg);
+      pkg_util.p_saveLog('PRFL_CALC_PROD_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+      -- prfl prod fmly calc (only for Medi profiles) 
+      -- this is where the pricing is
+      INSERT INTO prfl_prod_fmly_calc_t
+         (prfl_id, ndc_lbl, ndc_prod, calc_typ_cd, comp_typ_cd, calc_amt)
+      SELECT t.prfl_id, a_prc.ndc_lbl, a_prc.ndc_prod, t.calc_typ_cd, t.calc_typ_cd
+         ,CASE 
+            WHEN t.calc_typ_cd = 'AMP' AND prcss_cur.prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_mthly THEN 
+               CASE 
+                  WHEN prcss_cur.period_ind = 1 THEN a_prc.AMP_MTH_1
+                  WHEN prcss_cur.period_ind = 2 THEN a_prc.AMP_MTH_2
+                  WHEN prcss_cur.period_ind = 3 THEN a_prc.AMP_MTH_3
+               END
+            WHEN t.calc_typ_cd = 'AMP' AND prcss_cur.prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_qtrly THEN a_prc.amp_qtrly
+            WHEN t.calc_typ_cd = 'BP' THEN a_prc.bp_qtrly
+         END AS price
+      FROM prfl_calc_typ_t t
+         ,prfl_t p
+      WHERE t.prfl_id = p.prfl_id
+         AND t.prfl_id = v_prfl_id
+         AND p.prcss_typ_cd = prcss_cur.prcss_typ
+         AND prcss_cur.prcss_typ IN (hcrs.pkg_constants.cs_med_prcssng_typ_mthly, hcrs.pkg_constants.cs_med_prcssng_typ_qtrly)
+         AND NOT EXISTS (
+            SELECT 1 
+            FROM hcrs.prfl_prod_fmly_calc_t pc
+            WHERE pc.prfl_id = t.prfl_id
+               AND pc.calc_typ_cd = t.calc_typ_cd
+               AND pc.comp_typ_cd = t.calc_typ_cd
+               AND pc.ndc_lbl = a_prc.ndc_lbl
+               AND pc.ndc_prod = a_prc.ndc_prod);
+      pkg_util.p_saveLog('PRFL_PROD_FMLY_CALC_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+      -- prfl prod fmly calc (only for Medi profiles) 
+      -- this is where the pricing is
+      INSERT INTO prfl_prod_calc_t
+         (prfl_id, ndc_lbl, ndc_prod, ndc_pckg, calc_typ_cd, comp_typ_cd, calc_amt)
+      SELECT t.prfl_id, a_prc.ndc_lbl, a_prc.ndc_prod, a_prc.ndc_pckg, t.calc_typ_cd, t.calc_typ_cd
+         ,CASE 
+            WHEN t.calc_typ_cd = 'AMP' AND prcss_cur.prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_mthly THEN 
+               CASE 
+                  WHEN prcss_cur.period_ind = 1 THEN a_prc.AMP_MTH_1
+                  WHEN prcss_cur.period_ind = 2 THEN a_prc.AMP_MTH_2
+                  WHEN prcss_cur.period_ind = 3 THEN a_prc.AMP_MTH_3
+               END
+            WHEN t.calc_typ_cd = 'AMP' AND prcss_cur.prcss_typ = hcrs.pkg_constants.cs_med_prcssng_typ_qtrly THEN a_prc.amp_qtrly
+            WHEN t.calc_typ_cd = 'BP' THEN a_prc.bp_qtrly
+            WHEN t.calc_typ_cd = 'ASP' THEN a_prc.asp_qrtly
+            WHEN t.calc_typ_cd = 'NFAMP' AND prcss_cur.prcss_typ = hcrs.pkg_constants.cs_va_prcssng_typ_qtrly THEN a_prc.nfamp_qrtly
+            WHEN t.calc_typ_cd = 'NFAMP' AND prcss_cur.prcss_typ = hcrs.pkg_constants.cs_va_prcssng_typ_annl THEN a_prc.nfamp_annual
+            WHEN t.calc_typ_cd = 'FCP' THEN a_prc.fcp_annual
+         END AS price
+      FROM prfl_calc_typ_t t
+         ,prfl_t p
+      WHERE t.prfl_id = p.prfl_id
+         AND t.prfl_id = v_prfl_id
+         AND p.prcss_typ_cd = prcss_cur.prcss_typ
+         AND NOT EXISTS (
+            SELECT 1 
+            FROM hcrs.prfl_prod_calc_t pc
+            WHERE pc.prfl_id = t.prfl_id
+               AND pc.calc_typ_cd = t.calc_typ_cd
+               AND pc.comp_typ_cd = t.calc_typ_cd
+               AND pc.ndc_lbl = a_prc.ndc_lbl
+               AND pc.ndc_prod = a_prc.ndc_prod
+               AND pc.ndc_pckg = a_prc.ndc_pckg);
+      pkg_util.p_saveLog('PRFL_PROD_CALC_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   END LOOP; -- all price types processed
+
+   pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN no_data_found THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('NO_DATA_FOUND Exception. Unable to find period for '||to_char(a_prc.qtr_start,'mm/dd/yyyy hh24:mi:ss')||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+   
+   WHEN E_InvalidPrfl THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('E_InvalidPrfl Exception. Unable to find profile. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+
+   WHEN E_InvalidPrcss THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('E_InvalidPrcss Exception. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+   
+   WHEN OTHERS THEN
+      ROLLBACK;
+      pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+END;
+/*
+*/
+PROCEDURE p_run_pricing_delta IS
+   v_module    conv_log_t.module%TYPE := 'p_run_pricing_delta';
+BEGIN
+
+   pkg_util.p_saveLog('START', c_program, v_module);
+
+   -- loop through all pricing available and insert if new
+   FOR prc_cur IN (
+      SELECT * FROM ic_pricing_delta_v v
+      ORDER BY v.ndc11, v.year_qtr) LOOP
+
+      pkg_util.p_saveLog('NDC11: '||prc_cur.ndc11||', QTR: '||prc_cur.year_qtr, c_program, v_module);
+
+      -- process WAC
+      IF prc_cur.wac IS NOT NULL THEN
+         -- non GP prices are treated differently
+         p_process_WAC_price (prc_cur);
+      ELSE
+         -- all other GP prices
+         p_process_GP_price (prc_cur);
+         NULL;
+      END IF;
+   
+   END LOOP;
 
    COMMIT;
 

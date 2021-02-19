@@ -4,6 +4,8 @@ CREATE OR REPLACE PACKAGE HCRS.pkg_load_bivv_medi_data AS
    PROCEDURE p_run_phase2 (a_clean_flg VARCHAR2 DEFAULT 'Y');
    PROCEDURE p_run_phase3 (a_clean_flg VARCHAR2 DEFAULT 'Y');
 
+   PROCEDURE p_run_pricing_delta;
+
 END;
 /
 CREATE OR REPLACE PACKAGE BODY HCRS.pkg_load_bivv_medi_data AS
@@ -1034,6 +1036,200 @@ EXCEPTION
       bivv.pkg_util.p_saveLog('END', c_program, v_module);
 
 END;
+/*
+*/
+PROCEDURE p_run_pricing_delta IS
+  v_module    bivv.conv_log_t.module%TYPE := 'p_run_pricing_delta';
 
+BEGIN
+
+   bivv.pkg_util.p_saveLog('START', c_program, v_module);
+
+   -- copy WAC/LP prices
+   INSERT INTO hcrs.prod_price_t 
+      (ndc_lbl, ndc_prod, ndc_pckg, prod_price_typ_cd, eff_dt, end_dt, price_amt, rec_src_ind)
+   SELECT ndc_lbl, ndc_prod, ndc_pckg, prod_price_typ_cd, eff_dt, end_dt, price_amt, rec_src_ind   
+   FROM bivv.prod_price_t pp
+   WHERE NOT EXISTS (
+      SELECT 1 FROM hcrs.prod_price_t t
+      WHERE t.prod_price_typ_cd = pp.prod_price_typ_cd
+         AND t.ndc_lbl = pp.ndc_lbl
+         AND t.ndc_prod = pp.ndc_prod
+         AND t.ndc_pckg = pp.ndc_pckg
+         AND t.eff_dt = pp.eff_dt);
+   bivv.pkg_util.p_saveLog('PROD_PRICE_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- qtrly AMP/BP into product transmission
+   INSERT INTO hcrs.prod_trnsmsn_t
+      (ndc_lbl, ndc_prod, period_id, trnsmsn_seq_no, prod_trnsmsn_stat_cd, prod_trnsmsn_rsn_cd, 
+      amp_amt, bp_amt, actv_flg, amp_apprvl_flg, bp_apprvl_flg, trnsmsn_dt, dra_baseline_flg)
+   SELECT 
+      ndc_lbl, ndc_prod, period_id, trnsmsn_seq_no, prod_trnsmsn_stat_cd, prod_trnsmsn_rsn_cd, 
+      amp_amt, bp_amt, actv_flg, amp_apprvl_flg, bp_apprvl_flg, trnsmsn_dt, dra_baseline_flg
+   FROM bivv.prod_trnsmsn_t pt
+   WHERE NOT EXISTS (
+      SELECT 1 FROM hcrs.prod_trnsmsn_t t
+      WHERE t.period_id = pt.period_id
+         AND t.ndc_lbl = pt.ndc_lbl
+         AND t.ndc_prod = pt.ndc_prod);
+   bivv.pkg_util.p_saveLog('PROD_TRNSMSN_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- insert profiles
+   INSERT INTO hcrs.prfl_t 
+      (prfl_id, snpsht_id, prfl_stat_cd, agency_typ_cd, tim_per_cd, prcss_typ_cd, prfl_nm, 
+      begn_dt, end_dt, copy_hist_ind, prelim_ind, mtrx_ind)
+   SELECT 
+      p.prfl_id, p.snpsht_id, p.prfl_stat_cd, p.agency_typ_cd, p.tim_per_cd, p.prcss_typ_cd, p.prfl_nm, 
+      p.begn_dt, p.end_dt, p.copy_hist_ind, p.prelim_ind, p.mtrx_ind
+   FROM bivv.prfl_t p
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE p.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_t p2
+         WHERE p2.prfl_id = p.prfl_id);
+   bivv.pkg_util.p_saveLog('PRFL_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- profile company
+   INSERT INTO hcrs.prfl_co_t (prfl_id, co_id)
+   SELECT pc.prfl_id, pc.co_id
+   FROM bivv.prfl_co_t pc
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE pc.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_co_t pc2
+         WHERE pc2.prfl_id = pc.prfl_id
+            AND pc2.co_id = pc.co_id);
+   bivv.pkg_util.p_saveLog('PRFL_CO_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- profile calc type
+   INSERT INTO hcrs.prfl_calc_typ_t (calc_typ_cd, prfl_id, calc_mthd_cd)
+   SELECT ct.calc_typ_cd, ct.prfl_id, ct.calc_mthd_cd
+   FROM bivv.prfl_calc_typ_t ct
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE ct.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_calc_typ_t ct2
+         WHERE ct2.calc_typ_cd = ct.calc_typ_cd
+            AND ct2.prfl_id = ct.prfl_id
+            AND ct2.calc_mthd_cd = ct.calc_mthd_cd);
+   bivv.pkg_util.p_saveLog('PRFL_CALC_TYP_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- profile variables
+   INSERT INTO hcrs.prfl_var_t (prfl_id, agency_typ_cd, var_cd, val_txt, prcss_typ_cd)
+   SELECT v.prfl_id, v.agency_typ_cd, v.var_cd, v.val_txt, v.prcss_typ_cd
+   FROM bivv.prfl_var_t v
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE v.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_var_t v2
+         WHERE v2.prfl_id = v.prfl_id
+            AND v2.agency_typ_cd = v.agency_typ_cd
+            AND v2.var_cd = v.var_cd);
+   bivv.pkg_util.p_saveLog('PRFL_VAR_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- profile prod family
+   INSERT INTO hcrs.prfl_prod_fmly_t (prfl_id, ndc_lbl, ndc_prod)
+   SELECT pf.prfl_id, pf.ndc_lbl, pf.ndc_prod
+   FROM bivv.prfl_prod_fmly_t pf
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE pf.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_prod_fmly_t pf2
+         WHERE pf2.prfl_id = pf.prfl_id
+            AND pf2.ndc_lbl = pf.ndc_lbl
+            AND pf2.ndc_prod = pf.ndc_prod);
+   bivv.pkg_util.p_saveLog('PRFL_PROD_FMLY_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   INSERT INTO hcrs.prfl_prod_t 
+      (prfl_id, ndc_lbl, ndc_prod, ndc_pckg, pri_whls_mthd_cd, calc_stat_cd, shtdwn_ind)
+   SELECT pp.prfl_id, pp.ndc_lbl, pp.ndc_prod, pp.ndc_pckg, pp.pri_whls_mthd_cd, pp.calc_stat_cd, pp.shtdwn_ind
+   FROM bivv.prfl_prod_t pp
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE pp.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_prod_t pp2
+         WHERE pp2.prfl_id = pp.prfl_id
+            AND pp2.ndc_lbl = pp.ndc_lbl
+            AND pp2.ndc_prod = pp.ndc_prod
+            AND pp2.ndc_pckg = pp.ndc_pckg);
+   bivv.pkg_util.p_saveLog('PRFL_PROD_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- profile calc prod family
+   INSERT INTO hcrs.prfl_calc_prod_fmly_t
+      (prfl_id, calc_typ_cd, ndc_lbl, ndc_prod, pri_whls_mthd_cd)
+   SELECT pc.prfl_id, pc.calc_typ_cd, pc.ndc_lbl, pc.ndc_prod, pc.pri_whls_mthd_cd
+   FROM bivv.prfl_calc_prod_fmly_t pc
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE pc.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_calc_prod_fmly_t pc2
+         WHERE pc2.prfl_id = pc.prfl_id
+            AND pc2.calc_typ_cd = pc.calc_typ_cd
+            AND pc2.ndc_lbl = pc.ndc_lbl
+            AND pc2.ndc_prod = pc.ndc_prod);
+   bivv.pkg_util.p_saveLog('PRFL_CALC_PROD_FMLY_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- profile calc prod
+   INSERT INTO hcrs.prfl_calc_prod_t 
+      (prfl_id, calc_typ_cd, ndc_lbl, ndc_prod, ndc_pckg, pri_whls_mthd_cd)
+   SELECT pc.prfl_id, pc.calc_typ_cd, pc.ndc_lbl, pc.ndc_prod, pc.ndc_pckg, pc.pri_whls_mthd_cd
+   FROM bivv.prfl_calc_prod_t pc
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE pc.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_calc_prod_t pc2
+         WHERE pc2.prfl_id = pc.prfl_id
+            AND pc2.calc_typ_cd = pc.calc_typ_cd
+            AND pc2.ndc_lbl = pc.ndc_lbl
+            AND pc2.ndc_prod = pc.ndc_prod
+            AND pc2.ndc_pckg = pc.ndc_pckg);
+   bivv.pkg_util.p_saveLog('PRFL_CALC_PROD_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- profile prod family calc prices
+   INSERT INTO hcrs.prfl_prod_fmly_calc_t
+      (prfl_id, ndc_lbl, ndc_prod, calc_typ_cd, comp_typ_cd, calc_amt)
+   SELECT fc.prfl_id, fc.ndc_lbl, fc.ndc_prod, fc.calc_typ_cd, fc.comp_typ_cd, fc.calc_amt
+   FROM bivv.prfl_prod_fmly_calc_t fc
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE fc.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_prod_fmly_calc_t fc2
+         WHERE fc2.prfl_id = fc.prfl_id
+            AND fc2.ndc_lbl = fc.ndc_lbl
+            AND fc2.ndc_prod = fc.ndc_prod
+            AND fc2.calc_typ_cd = fc.calc_typ_cd
+            AND fc2.comp_typ_cd = fc.comp_typ_cd);
+   bivv.pkg_util.p_saveLog('PRFL_PROD_FMLY_CALC_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   -- profile prod calc prices
+   INSERT INTO hcrs.prfl_prod_calc_t
+      (prfl_id, ndc_lbl, ndc_prod, ndc_pckg, calc_typ_cd, comp_typ_cd, calc_amt)
+   SELECT fc.prfl_id, fc.ndc_lbl, fc.ndc_prod, fc.ndc_pckg, fc.calc_typ_cd, fc.comp_typ_cd, fc.calc_amt
+   FROM bivv.prfl_prod_calc_t fc
+      ,bivv.bivv_prfl_delta_v pd
+   WHERE fc.prfl_id = pd.prfl_id
+      AND NOT EXISTS (
+         SELECT 1 FROM hcrs.prfl_prod_calc_t fc2
+         WHERE fc2.prfl_id = fc.prfl_id
+            AND fc2.ndc_lbl = fc.ndc_lbl
+            AND fc2.ndc_prod = fc.ndc_prod
+            AND fc2.ndc_pckg = fc.ndc_pckg
+            AND fc2.calc_typ_cd = fc.calc_typ_cd
+            AND fc2.comp_typ_cd = fc.comp_typ_cd);
+   bivv.pkg_util.p_saveLog('PRFL_PROD_CALC_T inserted: '||SQL%ROWCOUNT, c_program, v_module);
+
+   COMMIT;
+
+   bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+EXCEPTION
+   WHEN OTHERS THEN
+      ROLLBACK;
+      bivv.pkg_util.p_saveLog('Other exception. SQLERRM: '||SQLERRM||'. BACKTRACE: '||dbms_utility.format_error_backtrace, c_program, v_module);
+      bivv.pkg_util.p_saveLog('END', c_program, v_module);
+
+END;
+/*
+*/
 END;
 /
