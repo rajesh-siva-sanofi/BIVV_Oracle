@@ -13,7 +13,8 @@ WITH src AS (
       ,cppt.cont_num
       ,c.cont_title
       ,c.cont_internal_id
-      ,(SELECT COUNT(*) FROM bivvcars.adjitem ai WHERE ai.cont_num = c.cont_num) AS adjitems_cnt
+      ,(SELECT COUNT(*) FROM bivvcars.adjitem ai WHERE ai.cont_num = c.cont_num
+         AND ai.adjitm_dt_start = cqh.calcqtrhdr_dt_start) AS adjitems_cnt
    FROM
       bivvcars.calcqtr cq
       ,bivvcars.prod p
@@ -54,7 +55,7 @@ SELECT
    p.period_id, p.first_day_period AS per_begin_dt, p.last_day_period AS per_end_dt
    ,s.pgm_id -- load Medicaid FDRL URAs under Alaska Fdrl program
    ,SUBSTR(s.ndc11,1,5) AS ndc_lbl, SUBSTR(s.ndc11,6,4) AS ndc_prod, SUBSTR(s.ndc11,10,2) AS ndc_pckg
-   ,s.rpu AS calc_amt, p.last_day_period + 1 AS eff_dt, to_date('1/1/2100','mm/dd/yyyy') AS end_dt
+   ,s.rpu AS calc_amt, SYSDATE AS eff_dt, to_date('1/1/2100','mm/dd/yyyy') AS end_dt
    ,'BIVV' AS src_sys -- this is needed for HCRS.PUR_EVALUATE_V view
    ,s.calcqtr_num AS src_sys_unique_id
    ,s.cont_num, s.cont_title, s.cont_internal_id, s.formula_name
@@ -63,37 +64,8 @@ FROM bivv_pur_final_results_val_v s
 WHERE NVL(s.val_msg, 'OK') = 'OK'
    AND s.calcqtrhdr_dt_start = p.first_day_period;
 
---SELECT COUNT(*)
---FROM bivv.bivv_pur_final_results_v
---WHERE 1=1
---   AND NVL(val_msg, 'OK') != 'OK'
---;
---SELECT 
-----   COUNT(*)
---   v.*
---FROM pur_final_results_v v
---WHERE cont_num = 1
---ORDER BY cont_num, ndc_lbl, ndc_prod, ndc_pckg, period_id;
---
---SELECT f.pgm_id, p.pgm_nm, f.ndc_lbl, COUNT(*)
---FROM hcrs.pur_final_results_t f
---   ,hcrs.pgm_t p
---WHERE 1=1
---   AND f.pgm_id = p.pgm_id
---GROUP BY f.pgm_id, p.pgm_nm, f.ndc_lbl
---ORDER BY 1,2;
---
---SELECT * FROM hcrs.pur_final_results_t
---WHERE pgm_id IN (1640, 1660) -- BETWEEN 2 AND 50 OR pgm_id = 1544
---ORDER BY per_begin_dt DESC, pgm_id;
---
---
---SELECT 
-----   hcrs_pgm_id, COUNT(*)
---   t.hcrs_pgm_id, state_cd, t.*
---FROM medi_pgms_map_v t
---WHERE t.cont_num = 2
-----GROUP BY hcrs_pgm_id
-----HAVING COUNT(*) > 1
---ORDER BY t.hcrs_pgm_id, t.state_cd
---;
+--SELECT t.per_begin_dt, t.pgm_id, t.ndc_lbl, t.ndc_prod, t.ndc_pckg, COUNT(*)
+--FROM bivv_pur_final_results_v t
+--GROUP BY t.per_begin_dt, t.pgm_id, t.ndc_lbl, t.ndc_prod, t.ndc_pckg
+--HAVING COUNT(*) > 1
+--ORDER BY 1 DESC,2,3,4

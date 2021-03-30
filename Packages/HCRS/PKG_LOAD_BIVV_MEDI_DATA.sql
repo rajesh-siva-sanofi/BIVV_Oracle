@@ -586,42 +586,89 @@ END;
 
 PROCEDURE p_load_pur_results IS
    v_module    bivv.conv_log_t.module%TYPE := 'p_load_claim_hist';
+   v_upd_cnt   NUMBER := 0;
+   v_ins_cnt   NUMBER := 0;
+--   v_eff_dt    DATE := SYSDATE;
 BEGIN
    bivv.pkg_util.p_saveLog('START', c_program, v_module);
 
-   INSERT INTO hcrs.pur_final_results_t (
-      period_id, 
-      per_begin_dt, 
-      per_end_dt, 
-      pgm_id, 
-      ndc_lbl, 
-      ndc_prod, 
-      ndc_pckg, 
-      calc_amt, 
-      eff_dt, 
-      end_dt, 
-      create_dt, 
-      mod_by, 
-      src_sys, 
-      src_sys_unique_id)
-   SELECT
-      period_id, 
-      per_begin_dt, 
-      per_end_dt, 
-      pgm_id, 
-      ndc_lbl, 
-      ndc_prod, 
-      ndc_pckg, 
-      calc_amt, 
-      eff_dt, 
-      end_dt, 
-      SYSDATE AS create_dt, 
-      mod_by, 
-      src_sys, 
-      src_sys_unique_id
-   FROM bivv.pur_final_results_t;
+   FOR rec IN (
+      SELECT
+         period_id, 
+         per_begin_dt, 
+         per_end_dt, 
+         pgm_id, 
+         ndc_lbl, 
+         ndc_prod, 
+         ndc_pckg, 
+         calc_amt, 
+         eff_dt, 
+         end_dt, 
+         mod_by, 
+         src_sys, 
+         src_sys_unique_id
+      FROM bivv.pur_final_results_t
+--      WHERE ndc_prod = '0801' AND pgm_id = 1
+   ) LOOP
 
-   bivv.pkg_util.p_saveLog('Inserted PUR_FINAL_RESULTS_T count: '||SQL%ROWCOUNT, c_program, v_module);
+      -- update end date of any existing record with the same key and different price
+      UPDATE hcrs.pur_final_results_t t
+      SET t.end_dt = rec.eff_dt - 1/(24*60*60)
+      WHERE t.period_id = rec.period_id
+         AND t.pgm_id = rec.pgm_id
+         AND t.ndc_lbl = rec.ndc_lbl
+         AND t.ndc_prod = rec.ndc_prod
+         AND t.ndc_pckg = rec.ndc_pckg
+         AND t.end_dt = to_date('1/1/2100','mm/dd/yyyy')
+         AND t.calc_amt != rec.calc_amt;
+
+      v_upd_cnt := v_upd_cnt + SQL%ROWCOUNT;
+
+      -- insert only if amount is different for the same period/pgm/ndc  
+      INSERT INTO hcrs.pur_final_results_t (
+         period_id, 
+         per_begin_dt, 
+         per_end_dt, 
+         pgm_id, 
+         ndc_lbl, 
+         ndc_prod, 
+         ndc_pckg, 
+         calc_amt, 
+         eff_dt, 
+         end_dt, 
+         mod_by, 
+         src_sys, 
+         src_sys_unique_id)
+      SELECT 
+         rec.period_id, 
+         rec.per_begin_dt, 
+         rec.per_end_dt, 
+         rec.pgm_id, 
+         rec.ndc_lbl, 
+         rec.ndc_prod, 
+         rec.ndc_pckg, 
+         rec.calc_amt, 
+         rec.eff_dt, 
+         rec.end_dt, 
+         rec.mod_by, 
+         rec.src_sys, 
+         rec.src_sys_unique_id
+      FROM dual
+      WHERE NOT EXISTS (
+         SELECT 1 FROM hcrs.pur_final_results_t t
+         WHERE t.period_id = rec.period_id
+            AND t.pgm_id = rec.pgm_id
+            AND t.ndc_lbl = rec.ndc_lbl
+            AND t.ndc_prod = rec.ndc_prod
+            AND t.ndc_pckg = rec.ndc_pckg
+            AND t.calc_amt = rec.calc_amt);
+
+      v_ins_cnt := v_ins_cnt + SQL%ROWCOUNT;
+
+   END LOOP;
+
+   bivv.pkg_util.p_saveLog('Updated PUR_FINAL_RESULTS_T count: '||v_upd_cnt, c_program, v_module);
+   bivv.pkg_util.p_saveLog('Inserted PUR_FINAL_RESULTS_T count: '||v_ins_cnt, c_program, v_module);
    bivv.pkg_util.p_saveLog('END', c_program, v_module);
 
 EXCEPTION
