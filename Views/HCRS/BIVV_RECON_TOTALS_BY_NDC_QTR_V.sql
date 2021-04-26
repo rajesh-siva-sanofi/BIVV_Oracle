@@ -18,7 +18,6 @@ WITH src AS (
       AND ai.adjitm_num = i.adjitm_num (+)
       AND ai.status_num != 1700 --error
       AND c.num_sys_id = 102 -- MEDI
-      AND c.cont_num NOT IN (43001, 43002) -- for now exclude those 2 CA contracts in question
    GROUP BY p.prod_id_pri
       ,to_char (ai.adjitm_dt_start,'yyyy"Q"q')
 ),

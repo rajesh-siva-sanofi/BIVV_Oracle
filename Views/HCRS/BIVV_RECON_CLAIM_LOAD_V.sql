@@ -8,7 +8,6 @@ src_sub AS (
    FROM a, bivvcars.adjitem ai, bivvcars.submitem SI
    WHERE 1=1
       AND CONNECT_BY_ISLEAF = 1
---      AND LEVEL = 1
       AND a.adj_num = ai.adj_num
       AND si.status_num = 138
       AND ai.submitm_num = si.submitem_num
@@ -22,13 +21,11 @@ src AS (
       ,ai.cont_num, mp.cont_title, mp.bunit_name
       ,to_char(ai.adjitm_dt_start, 'yyyy"Q"q') AS qtr
       ,COUNT(*) AS cnt -- 4430
-      ,SUM(ai.adjitm_amt_final) AS paid_amt -- 76353956.28
-      ,SUM(ai.adjitm_pay_units) AS paid_units -- 225683195.033
-      ,SUM(ai.adjitm_dispute_units) AS dspt_units --  0
-      ,SUM(COALESCE(i.adjitemint_override_amt,i.adjitemint_calc_amt, 0)) AS int_amt -- 2062.34
+      ,SUM(ai.adjitm_amt_final) AS paid_amt
+      ,SUM(ai.adjitm_pay_units) AS paid_units
+      ,SUM(ai.adjitm_dispute_units) AS dspt_units
+      ,SUM(DECODE(i.adjitemint_flg_override, 'Y', i.adjitemint_override_amt, 'N', i.adjitemint_calc_amt, 0)) AS int_amt
       ,SUM(src_sub.submitem_units) AS claim_units
---      ,MAX(si.submitem_units) KEEP (DENSE_RANK LAST ORDER BY ai.adjitm_num) as claim_units
---      ,SUM(CASE WHEN ai.submtyp_cd IN ('ORIGINAL', 'RESUBMIT') AND NVL(si.resubtyp_cd, 'PARTIAL') = 'PARTIAL' AND ai.adjitm_num_prior IS NULL THEN si.submitem_units ELSE 0 END) as claim_units2
       ,SUM(src_sub.submitem_asking_dollars) AS claim_amt
    FROM bivvcars.adjitem ai
    LEFT OUTER JOIN src_sub ON src_sub.adjitm_num = ai.adjitm_num
@@ -161,8 +158,6 @@ j AS (
       ,COALESCE (src.qtr, stg.qtr, tgt.qtr) AS qtr
       ,src.claim_units AS src_claim_units, tgt.claim_units AS tgt_claim_units, stg.claim_units AS stg_claim_units
       ,src.paid_units AS src_paid_units
---      ,src.claim_units2 AS src_claim_units2
---      ,src.claim_units3 AS src_claim_units3
       ,chk.paid_units AS chk_paid_units, chk_stg.paid_units AS chk_stg_paid_units
       ,src.dspt_units AS src_dspt_units, chk.dspt_units AS chk_dspt_units, chk_stg.dspt_units AS chk_stg_dspt_units
       ,src.claim_amt AS src_claim_amt, tgt.claim_amt AS tgt_claim_amt
@@ -171,7 +166,6 @@ j AS (
       ,src.int_amt AS src_int_amt, chk.int_amt AS chk_int_amt, chk_stg.int_amt AS chk_stg_int_amt
       ,src.cnt AS src_cnt, tgt.cnt AS tgt_cnt, stg.cnt AS stg_cnt
    FROM src
---   LEFT OUTER JOIN hcrs.pgm_t p ON p.pgm_id = src.pgm_id
    FULL OUTER JOIN stg ON stg.ndc11 = src.ndc11 AND stg.pgm_id = src.pgm_id AND stg.qtr = src.qtr
    FULL OUTER JOIN tgt ON tgt.ndc11 = src.ndc11 AND tgt.pgm_id = src.pgm_id AND tgt.qtr = src.qtr
    FULL OUTER JOIN chk_stg ON chk_stg.ndc11 = src.ndc11 AND chk_stg.pgm_id = src.pgm_id AND chk_stg.qtr = src.qtr
