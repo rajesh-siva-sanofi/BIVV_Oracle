@@ -571,7 +571,15 @@ BEGIN
       end_dt,
       SYSDATE AS create_dt,
       mod_by
-   FROM bivv.prod_mstr_pgm_t;
+   FROM bivv.prod_mstr_pgm_t t
+   WHERE NOT EXISTS (
+      SELECT 1
+      FROM hcrs.prod_mstr_pgm_t t2
+      WHERE t2.pgm_id = t.pgm_id
+         AND t2.ndc_lbl = t.ndc_lbl
+         AND t2.ndc_prod = t.ndc_prod
+         AND t2.ndc_pckg = t.ndc_pckg);
+
    bivv.pkg_util.p_saveLog('Inserted PROD_MSTR_PGM_T count: '||SQL%ROWCOUNT, c_program, v_module);
 
    bivv.pkg_util.p_saveLog('END', c_program, v_module);
@@ -604,7 +612,6 @@ BEGIN
          calc_amt, 
          eff_dt, 
          end_dt, 
-         mod_by, 
          src_sys, 
          src_sys_unique_id
       FROM bivv.pur_final_results_t
@@ -636,7 +643,6 @@ BEGIN
          calc_amt, 
          eff_dt, 
          end_dt, 
-         mod_by, 
          src_sys, 
          src_sys_unique_id)
       SELECT 
@@ -650,7 +656,6 @@ BEGIN
          rec.calc_amt, 
          rec.eff_dt, 
          rec.end_dt, 
-         rec.mod_by, 
          rec.src_sys, 
          rec.src_sys_unique_id
       FROM dual
@@ -1048,7 +1053,7 @@ END;
 /*
    Phase 3: 
    1. Claims load
-   2. URA delta (TBD)
+   2. Product/Program eligibility delta
 */
 PROCEDURE p_run_phase3 (a_clean_flg VARCHAR2 DEFAULT 'Y') IS
   v_module    bivv.conv_log_t.module%TYPE := 'p_run_phase3';
@@ -1062,6 +1067,7 @@ BEGIN
    END IF;
 
    -- proceed to load the data
+   p_load_prod_pgm;
    p_load_reb_claim;
    p_load_reb_claim_line;
    p_load_reb_valid_claim;
