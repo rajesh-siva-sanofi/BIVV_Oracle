@@ -963,6 +963,7 @@ BEGIN
 
    -- truncate all stage tables to prepare for new load if requested
    IF nvl(a_trunc_flg, 'Y') = 'Y' THEN
+      pkg_util.p_trunc_tbl('PROD_MSTR_PGM_T');   
       pkg_util.p_trunc_tbl('CHECK_APPRVL_GRP_CHK_XREF_T');
       pkg_util.p_trunc_tbl('CHECK_APPRVL_GRP_APPRVL_T');
       pkg_util.p_trunc_tbl('CHECK_APPRVL_GRP_T');
@@ -978,6 +979,7 @@ BEGIN
    END IF;
 
    -- proceed to loading the data
+   p_load_prod_pgm;
    p_load_reb_claim;
    p_load_reb_claim_line;
    p_load_reb_valid_claim;
