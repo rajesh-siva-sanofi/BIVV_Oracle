@@ -42,7 +42,6 @@ v AS (
    SELECT 
       pm.hcrs_pgm_id AS pgm_id, SUBSTR(src.submitem_prod_id,1,5) AS ndc_lbl, src.period_id
       ,121 AS co_id, 1 AS reb_clm_seq_no, src.submitem_units
---      ,CASE WHEN NVL(src.submitem_asking_dollars, 0) = 0 THEN ROUND(src.submitem_units*src.submitem_rpu,2) ELSE src.submitem_asking_dollars END AS submitem_asking_dollars
       ,src.submitem_asking_dollars
       ,'CP' AS reb_claim_ln_itm_stat_cd
       ,CASE WHEN NVL(src.submitem_rx, 0) = 0 THEN 
@@ -72,15 +71,6 @@ SELECT
    END AS val_msg
    ,v.*
 FROM v;
-
-/*
-SELECT *
-FROM bivv.bivv_medi_claim_line_val_V
-WHERE 1=1
---   AND cont_num = 1 AND submitem_prod_id = '71104080901' AND submitem_dt_start = to_date('7/1/2018','mm/dd/yyyy') AND Bunit_Num = (SELECT bunit_num FROM bivvcars.bunit WHERE bunit_name = 'Mississippi')
-   AND cont_num = 1 AND submitem_prod_id = '71104080201' AND bunit_num = 6 AND submitem_dt_start = to_date('7/1/2018','mm/dd/yyyy')
-ORDER BY 1,2,3;
-*/
 
 -- main view
 CREATE OR REPLACE VIEW BIVV.BIVV_MEDI_CLAIM_LINE_V AS
