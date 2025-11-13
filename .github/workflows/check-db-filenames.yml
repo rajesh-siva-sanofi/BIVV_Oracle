@@ -1,0 +1,46 @@
+name: Check DB Filenames
+
+on:
+  pull_request:
+    paths:
+      - 'db/**'
+  push:
+    branches:
+      - main
+      - 'feature/**'
+    paths:
+      - 'db/**'
+
+jobs:
+  check-filenames:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Check filenames
+        run: |
+          # Get changed files
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep "^db/" || true)
+          else
+            CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR ${{ github.event.before }} ${{ github.sha }} | grep "^db/" || true)
+          fi
+          
+          # Check each filename
+          INVALID_FILES=""
+          for file in $CHANGED_FILES; do
+            filename=$(basename "$file")
+            if [[ "$filename" =~ [A-Z] ]]; then
+              INVALID_FILES="$INVALID_FILES\n  - $file (rename to: ${filename,,})"
+            fi
+          done
+          
+          if [[ -n "$INVALID_FILES" ]]; then
+            echo "❌ ERROR: Uppercase filenames detected in db/ directory:"
+            echo -e "$INVALID_FILES"
+            echo ""
+            echo "Team Policy: All filenames under db/ must be lowercase."
+            exit 1
+          fi
